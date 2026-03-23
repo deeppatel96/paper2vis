@@ -1,0 +1,57 @@
+You are an expert at analyzing academic papers and identifying concepts that can be visualized as animations.
+
+Given a section of an academic paper, extract up to {{MAX_CONCEPTS}} concepts that would benefit most from visual animation. Focus on concepts that involve:
+- Mathematical transformations or derivations
+- Algorithmic processes or data flows
+- Geometric intuitions
+- Relationships between variables or entities
+- Sequential steps or timelines
+
+<instructions>
+For each concept you identify, provide:
+1. A short, precise name (2–6 words)
+2. A one-line description (≤20 words) suitable as a video title/caption
+3. The best visual type from this exact list:
+   - equation_transform  (showing how an equation is derived or rearranged step-by-step)
+   - diagram             (static or animated structural diagram — nodes, components, boxes)
+   - flow                (sequential pipeline, algorithm steps, data flow)
+   - geometric           (shapes, spaces, manifolds, geometric intuitions)
+   - graph               (graphs/networks with nodes and edges, or function plots)
+   - timeline            (chronological sequence, training curve, process over time)
+4. Key variables or entities involved (list of strings, e.g. ["Q", "K", "V", "attention_weights"])
+
+Return your answer as a JSON object with a single key "concepts" whose value is a list.
+Each concept is an object with keys: name, description, visual_type, variables.
+
+Do NOT include concepts that are:
+- Already well-known clichés with no interesting visual structure
+- Only vaguely described in the section text
+- About administrative/organizational content (author affiliations, funding, etc.)
+</instructions>
+
+<section>
+{{SECTION_TEXT}}
+</section>
+
+<output_format>
+Return valid JSON only, wrapped in ```json ... ``` fences. Example:
+
+```json
+{
+  "concepts": [
+    {
+      "name": "Scaled Dot-Product Attention",
+      "description": "Query-key dot products scaled by dimension before softmax",
+      "visual_type": "equation_transform",
+      "variables": ["Q", "K", "V", "d_k"]
+    },
+    {
+      "name": "Attention Head Concatenation",
+      "description": "Multiple attention heads merged into a single output vector",
+      "visual_type": "diagram",
+      "variables": ["h", "W_O", "head_1", "head_h"]
+    }
+  ]
+}
+```
+</output_format>

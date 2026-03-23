@@ -43,6 +43,26 @@ def _call_openai(prompt: str, model: str) -> str:
     return response.choices[0].message.content or ""
 
 
+def _call_ollama(prompt: str, model: str) -> str:
+    import urllib.request
+    import json as _json
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://host-gateway:11434")
+    payload = _json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        data = _json.loads(resp.read())
+    return data["message"]["content"]
+
+
 # ---------------------------------------------------------------------------
 # Code generator
 # ---------------------------------------------------------------------------
@@ -52,9 +72,13 @@ class ManimCodeGenerator:
 
     def __init__(self, provider: str = "anthropic", model: str | None = None):
         self.provider = provider.lower()
+        default_models = {
+            "anthropic": "claude-opus-4-5",
+            "openai": "gpt-4o",
+            "ollama": "llama3.1:8b",
+        }
         self.model = model or os.environ.get(
-            "LLM_MODEL",
-            "claude-opus-4-5" if self.provider == "anthropic" else "gpt-4o",
+            "LLM_MODEL", default_models.get(self.provider, "llama3.1:8b")
         )
         self._prompt_template = self._load_prompt()
 
@@ -96,6 +120,8 @@ class ManimCodeGenerator:
             return _call_anthropic(prompt, self.model)
         elif self.provider == "openai":
             return _call_openai(prompt, self.model)
+        elif self.provider == "ollama":
+            return _call_ollama(prompt, self.model)
         else:
             raise ValueError(f"Unknown provider: {self.provider!r}")
 

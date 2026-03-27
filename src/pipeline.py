@@ -43,24 +43,29 @@ class Pipeline:
 
     def __init__(
         self,
-        provider: str = "anthropic",
+        provider: str | None = None,
         model: str | None = None,
         max_concepts: int = 10,
         render_quality: str = "medium_quality",
         skip_render: bool = False,
     ):
-        self.provider = provider
+        self.provider = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+        default_models = {
+            "anthropic": "claude-opus-4-5",
+            "openai": "gpt-4o",
+            "ollama": "llama3.1:8b",
+        }
         self.model = model or os.environ.get(
             "LLM_MODEL",
-            "claude-opus-4-5" if provider == "anthropic" else "gpt-4o",
+            default_models.get(self.provider, "llama3.1:8b"),
         )
         self.max_concepts = max_concepts
         self.render_quality = render_quality
         self.skip_render = skip_render
 
         self.parser = PDFParser()
-        self.extractor = ConceptExtractor(provider=provider, model=self.model)
-        self.codegen = ManimCodeGenerator(provider=provider, model=self.model)
+        self.extractor = ConceptExtractor(provider=self.provider, model=self.model)
+        self.codegen = ManimCodeGenerator(provider=self.provider, model=self.model)
         self.renderer = ManimRenderer(quality=render_quality)
 
     def run(self, pdf_path: str | Path, output_dir: str | Path | None = None) -> list[tuple[Concept, Path | None]]:
@@ -190,7 +195,7 @@ class Pipeline:
 def main(
     pdf: Path = typer.Argument(..., help="Path to the input PDF", exists=True),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
-    provider: str = typer.Option("anthropic", "--provider", "-p", help="LLM provider (anthropic|openai)"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM provider (anthropic|openai|ollama); defaults to LLM_PROVIDER env var"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model name"),
     max_concepts: int = typer.Option(10, "--max-concepts", help="Maximum concepts to visualize"),
     quality: str = typer.Option("medium_quality", "--quality", "-q", help="Manim quality (low_quality|medium_quality|high_quality)"),

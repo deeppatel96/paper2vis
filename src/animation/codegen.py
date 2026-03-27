@@ -58,7 +58,7 @@ def _call_ollama(prompt: str, model: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=300) as resp:
+    with urllib.request.urlopen(req, timeout=600) as resp:
         data = _json.loads(resp.read())
     return data["message"]["content"]
 
@@ -70,8 +70,8 @@ def _call_ollama(prompt: str, model: str) -> str:
 class ManimCodeGenerator:
     """Generates runnable Manim scene Python code for a given Concept."""
 
-    def __init__(self, provider: str = "anthropic", model: str | None = None):
-        self.provider = provider.lower()
+    def __init__(self, provider: str | None = None, model: str | None = None):
+        self.provider = (provider or os.environ.get("LLM_PROVIDER", "anthropic")).lower()
         default_models = {
             "anthropic": "claude-opus-4-5",
             "openai": "gpt-4o",

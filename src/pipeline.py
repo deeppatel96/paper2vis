@@ -38,34 +38,54 @@ app = typer.Typer(help="paper2vis: turn academic papers into animations.")
 # Pipeline class
 # ---------------------------------------------------------------------------
 
+DEFAULT_MODELS = {
+    "anthropic": "claude-opus-4-5",
+    "openai": "gpt-4o",
+    "ollama": "llama3.1:8b",
+}
+
+
 class Pipeline:
     """End-to-end paper-to-visualization pipeline."""
 
     def __init__(
         self,
+        # Extraction LLM (concept identification from paper sections)
         provider: str | None = None,
         model: str | None = None,
+        # Code generation LLM (Manim scene code — benefits from a stronger model)
+        codegen_provider: str | None = None,
+        codegen_model: str | None = None,
         max_concepts: int = 10,
         render_quality: str = "medium_quality",
         skip_render: bool = False,
     ):
+        # ── Extraction provider ──────────────────────────────────────────────
         self.provider = provider or os.environ.get("LLM_PROVIDER", "anthropic")
-        default_models = {
-            "anthropic": "claude-opus-4-5",
-            "openai": "gpt-4o",
-            "ollama": "llama3.1:8b",
-        }
         self.model = model or os.environ.get(
             "LLM_MODEL",
-            default_models.get(self.provider, "llama3.1:8b"),
+            DEFAULT_MODELS.get(self.provider, "llama3.1:8b"),
         )
+
+        # ── Codegen provider (falls back to extraction provider if not set) ──
+        self.codegen_provider = (
+            codegen_provider
+            or os.environ.get("CODEGEN_PROVIDER")
+            or self.provider
+        )
+        self.codegen_model = (
+            codegen_model
+            or os.environ.get("CODEGEN_MODEL")
+            or DEFAULT_MODELS.get(self.codegen_provider, self.model)
+        )
+
         self.max_concepts = max_concepts
         self.render_quality = render_quality
         self.skip_render = skip_render
 
         self.parser = PDFParser()
         self.extractor = ConceptExtractor(provider=self.provider, model=self.model)
-        self.codegen = ManimCodeGenerator(provider=self.provider, model=self.model)
+        self.codegen = ManimCodeGenerator(provider=self.codegen_provider, model=self.codegen_model)
         self.renderer = ManimRenderer(quality=render_quality)
 
     def run(self, pdf_path: str | Path, output_dir: str | Path | None = None) -> list[tuple[Concept, Path | None]]:
@@ -82,7 +102,11 @@ class Pipeline:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        console.print(Panel(f"[bold cyan]paper2vis[/] — [dim]{pdf_path.name}[/]"))
+        console.print(Panel(
+            f"[bold cyan]paper2vis[/] — [dim]{pdf_path.name}[/]\n"
+            f"Extraction: [yellow]{self.provider}[/] / [dim]{self.model}[/]\n"
+            f"Codegen:    [yellow]{self.codegen_provider}[/] / [dim]{self.codegen_model}[/]"
+        ))
 
         # ── Stage 1: Parse ──────────────────────────────────────────────
         with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as prog:
@@ -195,16 +219,25 @@ class Pipeline:
 def main(
     pdf: Path = typer.Argument(..., help="Path to the input PDF", exists=True),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM provider (anthropic|openai|ollama); defaults to LLM_PROVIDER env var"),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="LLM model name"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p",
+        help="Extraction LLM provider (anthropic|openai|ollama); defaults to LLM_PROVIDER env var"),
+    model: Optional[str] = typer.Option(None, "--model", "-m",
+        help="Extraction LLM model name; defaults to LLM_MODEL env var"),
+    codegen_provider: Optional[str] = typer.Option(None, "--codegen-provider",
+        help="Codegen LLM provider; defaults to CODEGEN_PROVIDER env var, then --provider"),
+    codegen_model: Optional[str] = typer.Option(None, "--codegen-model",
+        help="Codegen LLM model; defaults to CODEGEN_MODEL env var"),
     max_concepts: int = typer.Option(10, "--max-concepts", help="Maximum concepts to visualize"),
-    quality: str = typer.Option("medium_quality", "--quality", "-q", help="Manim quality (low_quality|medium_quality|high_quality)"),
+    quality: str = typer.Option("medium_quality", "--quality", "-q",
+        help="Manim quality (low_quality|medium_quality|high_quality)"),
     skip_render: bool = typer.Option(False, "--skip-render", help="Generate code but skip Manim rendering"),
 ) -> None:
     """Run the paper2vis pipeline on a PDF."""
     pipeline = Pipeline(
         provider=provider,
         model=model,
+        codegen_provider=codegen_provider,
+        codegen_model=codegen_model,
         max_concepts=max_concepts,
         render_quality=quality,
         skip_render=skip_render,

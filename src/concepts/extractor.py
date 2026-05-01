@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
+
+from src.llm_utils import call_llm
 
 load_dotenv()
 
@@ -20,16 +23,22 @@ load_dotenv()
 
 VisualType = Literal[
     "equation_transform",
+    "geometric",
+    "number_flow",
+    "weight_update",
+    "matrix_op",
     "diagram",
     "flow",
-    "geometric",
     "graph",
     "timeline",
 ]
 
 VALID_VISUAL_TYPES: set[str] = {
-    "equation_transform", "diagram", "flow", "geometric", "graph", "timeline"
+    "equation_transform", "geometric", "number_flow", "weight_update",
+    "matrix_op", "diagram", "flow", "graph", "timeline",
 }
+
+_RAW_TEXT_LIMIT = 1500  # chars stored per concept; matches codegen prompt usage
 
 
 @dataclass
@@ -40,6 +49,7 @@ class Concept:
     variables: list[str] = field(default_factory=list)
     source_section: str = ""
     raw_text: str = ""
+    shot_list: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,53 +58,9 @@ class Concept:
             "visual_type": self.visual_type,
             "variables": self.variables,
             "source_section": self.source_section,
+            "raw_text": self.raw_text,
+            "shot_list": self.shot_list,
         }
-
-
-# ---------------------------------------------------------------------------
-# LLM client abstraction
-# ---------------------------------------------------------------------------
-
-def _call_anthropic(prompt: str, model: str) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    message = client.messages.create(
-        model=model,
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
-
-
-def _call_openai(prompt: str, model: str) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=2048,
-    )
-    return response.choices[0].message.content or ""
-
-
-def _call_ollama(prompt: str, model: str) -> str:
-    import urllib.request
-    import json as _json
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://host-gateway:11434")
-    payload = _json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-    }).encode()
-    req = urllib.request.Request(
-        f"{base_url}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = _json.loads(resp.read())
-    return data["message"]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -111,11 +77,11 @@ class ConceptExtractor:
         self,
         provider: str = "anthropic",
         model: str | None = None,
-        max_concepts_per_section: int = 3,
+        max_concepts_per_section: int = 5,
     ):
         self.provider = provider.lower()
         default_models = {
-            "anthropic": "claude-opus-4-5",
+            "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o",
             "ollama": "llama3.1:8b",
         }
@@ -128,15 +94,6 @@ class ConceptExtractor:
     # ------------------------------------------------------------------
 
     def extract(self, section: dict[str, Any]) -> list[Concept]:
-        """
-        Extract concepts from a single section dict.
-
-        Args:
-            section: dict with keys: title, text, equations, figures
-
-        Returns:
-            List of Concept objects.
-        """
         section_text = self._format_section(section)
         if not section_text.strip():
             return []
@@ -144,25 +101,24 @@ class ConceptExtractor:
         prompt = self._prompt_template.replace("{{SECTION_TEXT}}", section_text)
         prompt = prompt.replace("{{MAX_CONCEPTS}}", str(self.max_concepts_per_section))
 
-        raw = self._call_llm(prompt)
-        concepts = self._parse_response(raw, section_title=section.get("title", ""))
-        return concepts
+        raw = call_llm(self.provider, self.model, prompt, max_tokens=4096)
+        source_text = section.get("text", "")[:_RAW_TEXT_LIMIT]
+        return self._parse_response(raw, section_title=section.get("title", ""), source_text=source_text)
 
     def extract_all(self, sections: list[dict[str, Any]]) -> list[Concept]:
         """Extract concepts from all sections, deduplicating by name."""
-        seen: set[str] = set()
+        seen_keys: list[str] = []
         all_concepts: list[Concept] = []
 
         for section in sections:
             title = section.get("title", "")
-            # Skip reference/bibliography sections
             if re.search(r"^(References?|Bibliography|Acknowledgements?)$", title, re.I):
                 continue
 
             for concept in self.extract(section):
-                key = concept.name.lower().strip()
-                if key not in seen:
-                    seen.add(key)
+                key = normalize_concept_name(concept.name)
+                if not any(names_overlap(key, existing) for existing in seen_keys):
+                    seen_keys.append(key)
                     all_concepts.append(concept)
 
         return all_concepts
@@ -179,27 +135,14 @@ class ConceptExtractor:
         parts = [f"Section: {section.get('title', 'Untitled')}"]
         text = section.get("text", "").strip()
         if text:
-            # Truncate very long sections to save tokens
-            parts.append(text[:3000])
+            parts.append(text[:5000])
         if section.get("equations"):
             parts.append("\nEquations found in section:")
             for eq in section["equations"][:5]:
                 parts.append(f"  {eq}")
         return "\n".join(parts)
 
-    def _call_llm(self, prompt: str) -> str:
-        if self.provider == "anthropic":
-            return _call_anthropic(prompt, self.model)
-        elif self.provider == "openai":
-            return _call_openai(prompt, self.model)
-        elif self.provider == "ollama":
-            return _call_ollama(prompt, self.model)
-        else:
-            raise ValueError(f"Unknown provider: {self.provider!r}")
-
-    def _parse_response(self, raw: str, section_title: str) -> list[Concept]:
-        """Parse the LLM's JSON response into Concept objects."""
-        # Extract JSON from response (LLM may wrap it in markdown code blocks)
+    def _parse_response(self, raw: str, section_title: str, source_text: str = "") -> list[Concept]:
         json_str = _extract_json(raw)
         if not json_str:
             return []
@@ -209,7 +152,6 @@ class ConceptExtractor:
         except json.JSONDecodeError:
             return []
 
-        # Expect {"concepts": [...]}
         items = data if isinstance(data, list) else data.get("concepts", [])
         concepts: list[Concept] = []
 
@@ -220,6 +162,10 @@ class ConceptExtractor:
             if vtype not in VALID_VISUAL_TYPES:
                 vtype = "diagram"
 
+            shot_list = item.get("shot_list", [])
+            if isinstance(shot_list, list):
+                shot_list = [s for s in shot_list if isinstance(s, str)]
+
             concepts.append(
                 Concept(
                     name=item.get("name", "Unnamed Concept"),
@@ -227,7 +173,8 @@ class ConceptExtractor:
                     visual_type=vtype,
                     variables=item.get("variables", []),
                     source_section=section_title,
-                    raw_text=item.get("raw_text", ""),
+                    raw_text=source_text,
+                    shot_list=shot_list,
                 )
             )
 
@@ -238,19 +185,25 @@ class ConceptExtractor:
 # Helpers
 # ---------------------------------------------------------------------------
 
-import re as re  # noqa: E402  (needed for extract_all)
+def normalize_concept_name(name: str) -> str:
+    stopwords = {"the", "a", "an", "of", "in", "for", "and", "or", "with", "on", "via"}
+    tokens = re.sub(r"[^a-z0-9\s]", "", name.lower()).split()
+    return " ".join(t for t in tokens if t not in stopwords)
+
+
+def names_overlap(a: str, b: str, threshold: float = 0.6) -> bool:
+    set_a = set(a.split())
+    set_b = set(b.split())
+    if not set_a or not set_b:
+        return False
+    return len(set_a & set_b) / max(len(set_a), len(set_b)) >= threshold
 
 
 def _extract_json(text: str) -> str:
-    """Pull the first JSON object or array out of a (possibly markdown-wrapped) string."""
-    # Try to find a ```json ... ``` block
     md_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if md_match:
         return md_match.group(1)
-
-    # Try to find a bare JSON object or array
     obj_match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
     if obj_match:
         return obj_match.group(1)
-
     return ""

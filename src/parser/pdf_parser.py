@@ -122,6 +122,13 @@ class PDFParser:
         try:
             pages_text = self._extract_pages(doc)
             full_text = "\n".join(pages_text)
+            total_chars = len(full_text.strip())
+            if total_chars < 200:
+                raise ValueError(
+                    f"PDF appears to be a scanned image (only {total_chars} characters extracted). "
+                    "paper2vis requires a text-based PDF. Please use a version with selectable text, "
+                    "or run OCR on the document first."
+                )
             title = self._extract_title(doc, pages_text)
             abstract = self._extract_abstract(full_text)
             sections = self._split_into_sections(full_text, doc)

@@ -1,0 +1,34 @@
+You are given a list of micro-concepts extracted from an academic paper. Each concept is an atomic mathematical operation (a single equation, weight update, or transformation).
+
+Your job: identify the most meaningful DIRECTIONAL relationships between concepts.
+
+Relationship types to use:
+- "prerequisite" — concept A must be understood before concept B
+- "feeds into" — output of A becomes input to B
+- "special case of" — A is a specific instance of B
+- "enables" — A makes B possible
+- "compared with" — A and B are alternative approaches to the same thing
+
+Rules:
+- Only include relationships that are genuinely meaningful, not just "both are in ML"
+- Maximum 1.5 × N edges for N concepts (avoid over-connecting)
+- Each concept index is 0-based, matching the input order
+- Prefer "feeds into" for sequential computation chains
+- Short relationship labels (2–4 words max)
+
+<concepts>
+{{CONCEPTS_JSON}}
+</concepts>
+
+Return valid JSON only:
+
+```json
+{
+  "edges": [
+    {"from": 0, "to": 2, "label": "feeds into"},
+    {"from": 1, "to": 2, "label": "prerequisite"}
+  ]
+}
+```
+
+If no meaningful relationships exist, return `{"edges": []}`.

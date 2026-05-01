@@ -1,1 +1,23 @@
 .env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Generated job output (videos, renders, state files)
+data/*/
+data/*/_state.json
+
+# Keep the RAG examples
+!data/rag_examples.json
+
+# Rendered media
+output/
+media/
+
+# PDFs
+papers/
+
+# Node
+web/node_modules/
+web/.next/

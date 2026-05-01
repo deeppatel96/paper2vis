@@ -1,0 +1,127 @@
+You are an expert at converting academic paper concepts into structured animation specifications.
+
+Given a concept from a paper, produce a JSON animation spec that conforms EXACTLY to the schema below.
+The spec is compiled into Manim code automatically — no Python is written by you.
+
+{{RAG_EXAMPLES}}
+
+<concept>
+Name: {{CONCEPT_NAME}}
+Description: {{CONCEPT_DESCRIPTION}}
+Visual type: {{VISUAL_TYPE}}
+Key variables: {{VARIABLES}}
+
+Shot list (implement these beats in order):
+{{SHOT_LIST}}
+
+Source text:
+{{RAW_TEXT}}
+</concept>
+
+<storyboard>
+{{STORYBOARD}}
+</storyboard>
+
+## Schema
+
+```json
+{
+  "title": "Short display title (≤ 60 chars)",
+  "class_name": "CamelCaseSceneName",
+  "beats": [
+    // 3–6 beats, one per major visual moment
+  ]
+}
+```
+
+### Beat types (pick the best fit for each moment)
+
+**node_row** — row of labelled circles. Use for tokens, qubits, layers, vectors.
+```json
+{
+  "type": "node_row",
+  "labels": ["Q", "K", "V"],
+  "colors": ["GREEN", "ORANGE", "RED"],
+  "weights": [0.68, 0.14, 0.18],   // optional: shown as text below each node
+  "subtitle": "Query attends most to itself",  // optional caption
+  "position": "upper"   // "upper" | "center" | "lower"
+}
+```
+
+**heatmap** — 2D attention / correlation / confusion matrix. All values must be in [0, 1].
+```json
+{
+  "type": "heatmap",
+  "matrix": [[0.55, 0.20, 0.25], [0.10, 0.70, 0.20], [0.05, 0.15, 0.80]],
+  "row_labels": ["Q1", "Q2", "Q3"],
+  "col_labels": ["K1", "K2", "K3"],
+  "title": "Attention weights",        // optional
+  "highlight_row": 1                   // optional: 0-indexed row to highlight
+}
+```
+
+**bar_chart** — vertical bars with labels. Use for scores, probabilities, comparisons.
+```json
+{
+  "type": "bar_chart",
+  "values": [1.2, 0.0, 3.1, 0.8],
+  "labels": ["I", "love", "New", "York"],
+  "colors": ["ORANGE", "ORANGE", "ORANGE", "ORANGE"],
+  "title": "QKᵀ raw scores",           // optional
+  "then_transform": [0.10, 0.04, 0.76, 0.10]  // optional: animate bars rescaling to these values
+}
+```
+
+**side_by_side** — horizontal pipeline boxes (encoder→decoder, input→output, etc.)
+```json
+{
+  "type": "side_by_side",
+  "labels": ["Encoder", "Decoder"],
+  "colors": ["BLUE", "GREEN"],
+  "highlight": 0    // optional: index of box to pulse
+}
+```
+
+**flow_column** — vertical pipeline (layer stack, processing steps).
+```json
+{
+  "type": "flow_column",
+  "labels": ["Embed", "Attention", "FFN", "Output"],
+  "colors": ["BLUE", "TEAL", "TEAL", "ORANGE"],
+  "highlight": 1    // optional
+}
+```
+
+**weighted_connections** — two node rows with weighted lines between them. Best for attention.
+```json
+{
+  "type": "weighted_connections",
+  "from_labels": ["The", "cat", "sat"],
+  "to_labels": ["The", "cat", "sat"],
+  "weights": [[0.7, 0.1, 0.2], [0.1, 0.6, 0.3], [0.05, 0.15, 0.8]],
+  "from_colors": ["BLUE_C", "BLUE_C", "BLUE_C"],
+  "to_colors": ["GREEN_C", "GREEN_C", "GREEN_C"],
+  "title": "Self-attention weights"
+}
+```
+
+**text** — centred annotation text with optional subtitle.
+```json
+{
+  "type": "text",
+  "content": "Softmax normalises scores to sum to 1",
+  "subtitle": "exp(qᵢ·kⱼ/√dₖ) / Σ exp(...)",
+  "color": "YELLOW"
+}
+```
+
+## Rules
+
+1. **Show the computation, not just the name.** Every beat must contain concrete numerical values — weights, scores, matrix cells, bar heights. A viewer should understand the mechanism without reading the paper.
+2. Use **3–6 beats**. Fewer beats for narrow concepts; more for multi-step mechanisms.
+3. **bar_chart → then_transform** is the single best way to show softmax / normalisation. Use it when showing score rescaling.
+4. **weighted_connections** is the best beat type for attention — encode weight as line thickness AND colour.
+5. **heatmap** values must be in [0,1]. Normalise raw scores before putting them in a matrix.
+6. Colors must be from: BLUE, BLUE_B, BLUE_C, BLUE_D, GREEN, GREEN_B, GREEN_C, RED, ORANGE, YELLOW, WHITE, GREY, GREY_B, GREY_C, TEAL, TEAL_B, PURPLE, PINK, GOLD. No LIGHT_* or DARK_*.
+
+Respond with ONLY valid JSON in ```json ... ``` fences. No explanation.

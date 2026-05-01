@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>paper2vis</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #030712;
+    --surface:  #0f172a;
+    --border:   #1e293b;
+    --muted:    #334155;
+    --text:     #f1f5f9;
+    --sub:      #94a3b8;
+    --blue:     #3b82f6;
+    --blue-dim: #1d4ed8;
+    --green:    #22c55e;
+    --orange:   #f97316;
+    --purple:   #a855f7;
+    --teal:     #14b8a6;
+  }
+
+  html, body {
+    height: 100%;
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* ── Slide container ────────────────────────────────────── */
+  .deck { width: 100vw; height: 100vh; position: relative; }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    padding: 64px 80px;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.4s ease;
+  }
+  .slide.active { opacity: 1; pointer-events: auto; }
+
+  /* ── Navigation ─────────────────────────────────────────── */
+  .nav {
+    position: fixed; bottom: 32px; right: 40px;
+    display: flex; align-items: center; gap: 12px;
+    z-index: 100;
+  }
+  .nav button {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--sub); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; padding: 6px 14px; border-radius: 6px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .nav button:hover { background: var(--muted); color: var(--text); }
+  .nav .counter { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+
+  /* ── SLIDE 1 ────────────────────────────────────────────── */
+  #s1 { justify-content: center; gap: 0; }
+
+  .s1-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--blue); margin-bottom: 28px;
+  }
+
+  .s1-headline {
+    font-size: 64px; font-weight: 900; line-height: 1.05;
+    letter-spacing: -0.03em; max-width: 820px;
+  }
+  .s1-headline em { font-style: normal; color: var(--blue); }
+
+  .s1-sub {
+    margin-top: 24px; font-size: 22px; font-weight: 300;
+    color: var(--sub); max-width: 680px; line-height: 1.5;
+  }
+
+  .s1-divider {
+    width: 56px; height: 3px;
+    background: linear-gradient(90deg, var(--blue), var(--purple));
+    border-radius: 2px; margin: 40px 0;
+  }
+
+  .s1-stats {
+    display: flex; gap: 48px; align-items: flex-start;
+  }
+
+  .stat-block { display: flex; flex-direction: column; gap: 4px; }
+  .stat-num {
+    font-size: 36px; font-weight: 800; letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--text), var(--sub));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .stat-num.blue { background: linear-gradient(135deg, var(--blue), var(--teal));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-num.purple { background: linear-gradient(135deg, var(--purple), var(--blue));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-num.green { background: linear-gradient(135deg, var(--green), var(--teal));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-label { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: 0.04em; }
+
+  /* Pain points */
+  .s1-right {
+    position: absolute; right: 80px; top: 50%;
+    transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .pain-card {
+    width: 320px; padding: 18px 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; display: flex; align-items: flex-start; gap: 14px;
+  }
+  .pain-icon {
+    font-size: 20px; line-height: 1; flex-shrink: 0; margin-top: 1px;
+  }
+  .pain-text { font-size: 13px; color: var(--sub); line-height: 1.5; }
+  .pain-text strong { color: var(--text); display: block; margin-bottom: 2px; font-weight: 600; }
+
+  /* ── SLIDE 2 ────────────────────────────────────────────── */
+  #s2 { gap: 0; }
+
+  .s2-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 44px;
+  }
+
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo-mark {
+    width: 36px; height: 36px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--blue), var(--purple));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 900; color: white; letter-spacing: -1px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .logo-text {
+    font-size: 18px; font-weight: 700; letter-spacing: -0.02em;
+  }
+  .logo-text span { color: var(--blue); }
+
+  .s2-tagline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted); letter-spacing: 0.08em;
+  }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex; align-items: center; gap: 0;
+    margin-bottom: 44px;
+  }
+
+  .pipe-step {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 10px; text-align: center;
+    padding: 20px 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; position: relative;
+  }
+  .pipe-step:not(:last-child)::after {
+    content: '→';
+    position: absolute; right: -18px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); font-size: 16px; z-index: 2;
+  }
+  .pipe-step + .pipe-step { margin-left: 24px; }
+
+  .pipe-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 19px;
+  }
+  .pipe-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--muted); font-weight: 500;
+  }
+  .pipe-label { font-size: 13px; font-weight: 600; }
+  .pipe-sub { font-size: 11px; color: var(--sub); line-height: 1.4; }
+
+  .step-pdf  .pipe-icon { background: #1e293b; }
+  .step-extract .pipe-icon { background: rgba(59,130,246,0.12); }
+  .step-code .pipe-icon { background: rgba(168,85,247,0.12); }
+  .step-render .pipe-icon { background: rgba(249,115,22,0.12); }
+  .step-critic .pipe-icon { background: rgba(34,197,94,0.12); }
+
+  /* Feature grid */
+  .features {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  }
+
+  .feat {
+    padding: 18px 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px;
+    transition: border-color 0.2s;
+  }
+  .feat:hover { border-color: var(--muted); }
+
+  .feat-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .feat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .feat-title { font-size: 13px; font-weight: 600; }
+  .feat-body { font-size: 11.5px; color: var(--sub); line-height: 1.55; }
+  .feat-tag {
+    display: inline-block; margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<div class="deck">
+
+  <!-- ════════════════ SLIDE 1: THE PROBLEM ═══════════════════ -->
+  <div class="slide active" id="s1">
+
+    <div class="s1-eyebrow">The Problem with Scientific Knowledge</div>
+
+    <h1 class="s1-headline">
+      Research papers are<br>
+      <em>frozen in time.</em>
+    </h1>
+
+    <p class="s1-sub">
+      Dense notation. Static figures. Knowledge that takes hours to decode —
+      and even longer to teach. The PDF format hasn't changed since 1993.
+    </p>
+
+    <div class="s1-divider"></div>
+
+    <div class="s1-stats">
+      <div class="stat-block">
+        <span class="stat-num blue">4 hrs</span>
+        <span class="stat-label">Avg. time to deeply understand<br>one ML paper</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-num purple">2.2M</span>
+        <span class="stat-label">New papers published<br>per year</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-num green">0</span>
+        <span class="stat-label">Papers with interactive,<br>verified concept animations</span>
+      </div>
+    </div>
+
+    <!-- Pain cards -->
+    <div class="s1-right">
+      <div class="pain-card">
+        <div class="pain-icon">📄</div>
+        <div class="pain-text">
+          <strong>Static by design</strong>
+          PDFs are photographs of knowledge. Equations don't move. Proofs don't run. Understanding requires imagination.
+        </div>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon">🧠</div>
+        <div class="pain-text">
+          <strong>High cognitive load</strong>
+          Every paper assumes years of prerequisite context. There's no entry point — just a wall of notation.
+        </div>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon">🔗</div>
+        <div class="pain-text">
+          <strong>Disconnected knowledge</strong>
+          Concepts inside a paper have no structure. There's no map — no way to see what builds on what.
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /slide 1 -->
+
+
+  <!-- ════════════════ SLIDE 2: THE SOLUTION ══════════════════ -->
+  <div class="slide" id="s2">
+
+    <div class="s2-header">
+      <div class="logo">
+        <div class="logo-mark">p2v</div>
+        <div class="logo-text">paper<span>2vis</span></div>
+      </div>
+      <div class="s2-tagline">PDF in → Animated knowledge graph out</div>
+    </div>
+
+    <!-- Pipeline -->
+    <div class="pipeline">
+      <div class="pipe-step step-pdf">
+        <div class="pipe-icon">📄</div>
+        <div class="pipe-num">01</div>
+        <div class="pipe-label">Parse PDF</div>
+        <div class="pipe-sub">Sections, equations, figures extracted</div>
+      </div>
+      <div class="pipe-step step-extract">
+        <div class="pipe-icon" style="color:#3b82f6">⚛</div>
+        <div class="pipe-num">02</div>
+        <div class="pipe-label">Extract Concepts</div>
+        <div class="pipe-sub">Atomic operations with concrete values</div>
+      </div>
+      <div class="pipe-step step-code">
+        <div class="pipe-icon" style="color:#a855f7">✦</div>
+        <div class="pipe-num">03</div>
+        <div class="pipe-label">Generate Code</div>
+        <div class="pipe-sub">Manim storyboard → runnable scene</div>
+      </div>
+      <div class="pipe-step step-render">
+        <div class="pipe-icon" style="color:#f97316">▶</div>
+        <div class="pipe-num">04</div>
+        <div class="pipe-label">Render + Fix</div>
+        <div class="pipe-sub">Auto-retry loop with error correction</div>
+      </div>
+      <div class="pipe-step step-critic">
+        <div class="pipe-icon" style="color:#22c55e">★</div>
+        <div class="pipe-num">05</div>
+        <div class="pipe-label">AI Critic</div>
+        <div class="pipe-sub">Vision model scores & improves each video</div>
+      </div>
+    </div>
+
+    <!-- Feature grid -->
+    <div class="features">
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#3b82f6"></div>
+          <div class="feat-title">Manim-quality animations</div>
+        </div>
+        <div class="feat-body">
+          3Blue1Brown-style mathematical animations generated automatically. MathTex, ValueTrackers, Transform chains — all real Manim code.
+        </div>
+        <span class="feat-tag" style="background:rgba(59,130,246,0.12);color:#3b82f6">equation_transform · geometric · matrix_op</span>
+      </div>
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#a855f7"></div>
+          <div class="feat-title">Critic → Fix loop</div>
+        </div>
+        <div class="feat-body">
+          A vision LLM reviews keyframes, scores 1–10, identifies issues, and generates fix instructions — then re-renders. Up to 3 passes per concept.
+        </div>
+        <span class="feat-tag" style="background:rgba(168,85,247,0.12);color:#a855f7">avg 9/10 on math papers</span>
+      </div>
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#22c55e"></div>
+          <div class="feat-title">Voice narration</div>
+        </div>
+        <div class="feat-body">
+          Each animation gets a synced narration script generated from the concept description and storyboard, then synthesized with OpenAI TTS.
+        </div>
+        <span class="feat-tag" style="background:rgba(34,197,94,0.12);color:#22c55e">WebVTT subtitles included</span>
+      </div>
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#f97316"></div>
+          <div class="feat-title">Interactive concept map</div>
+        </div>
+        <div class="feat-body">
+          Concepts organized into a clickable knowledge graph. Prerequisites first. Click any node to jump to its animation — a "liquid paper" you navigate.
+        </div>
+        <span class="feat-tag" style="background:rgba(249,115,22,0.12);color:#f97316">topological ordering</span>
+      </div>
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#14b8a6"></div>
+          <div class="feat-title">Concept selection gate</div>
+        </div>
+        <div class="feat-body">
+          After extraction, you pick which concepts to animate. Review the full list with descriptions before committing any compute — no waste.
+        </div>
+        <span class="feat-tag" style="background:rgba(20,184,166,0.12);color:#14b8a6">human-in-the-loop</span>
+      </div>
+
+      <div class="feat">
+        <div class="feat-top">
+          <div class="feat-dot" style="background:#6366f1"></div>
+          <div class="feat-title">Provider-agnostic</div>
+        </div>
+        <div class="feat-body">
+          Anthropic, OpenAI, or Ollama for extraction and codegen. Separate providers for each stage. Fully configurable via environment variables.
+        </div>
+        <span class="feat-tag" style="background:rgba(99,102,241,0.12);color:#6366f1">claude · gpt-4o · llama3</span>
+      </div>
+
+    </div><!-- /features -->
+
+  </div><!-- /slide 2 -->
+
+</div><!-- /deck -->
+
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prev" onclick="go(-1)">← prev</button>
+  <span class="counter" id="counter">1 / 2</span>
+  <button id="next" onclick="go(1)">next →</button>
+</div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const counter = document.getElementById('counter');
+
+  function show(i) {
+    slides.forEach((s, j) => s.classList.toggle('active', j === i));
+    counter.textContent = `${i + 1} / ${slides.length}`;
+  }
+
+  function go(dir) {
+    current = Math.max(0, Math.min(slides.length - 1, current + dir));
+    show(current);
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   go(-1);
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,86 @@
+You are an expert Manim animator. The image above is a figure extracted directly from an academic paper.
+
+Write a complete, runnable Manim scene that:
+1. **Recreates this exact figure** — same components, same labels (copy text verbatim), same spatial layout, same color scheme
+2. **Animates it building up piece by piece** — reveal components in logical order so a viewer understands how the parts connect
+
+<concept>
+Name: {{CONCEPT_NAME}}
+Description: {{CONCEPT_DESCRIPTION}}
+Visual type: {{VISUAL_TYPE}}
+Key variables: {{VARIABLES}}
+</concept>
+
+Use the figure as ground truth. Do not invent components that aren't there. Do not omit components that are.
+
+## Layout helpers (auto-injected — use freely, NEVER redefine)
+
+⚠️ CRITICAL: These functions are already present in the execution environment. Do NOT write `def node_row(...)`, `def flow_column(...)`, `def connect(...)`, `def connect_curved(...)`, `def heatmap(...)`, `def bar_chart(...)`, or `def animate_bars(...)` anywhere in your code. Redefining them will shadow the correct implementations and break the scene.
+
+```
+node_row(labels, colors=None, center=ORIGIN, spacing=1.5, radius=0.32)
+  → (circles: VGroup, texts: VGroup)
+  Horizontal row of filled circles with labels. Example:
+    circles, texts = node_row(["Q", "K", "V"], [GREEN, ORANGE, RED])
+    self.play(LaggedStart(*[FadeIn(c) for c in circles], lag_ratio=0.2))
+    self.play(LaggedStart(*[FadeIn(t) for t in texts], lag_ratio=0.2))
+
+flow_column(stage_labels, stage_colors=None, center=ORIGIN, box_width=5.2, box_height=0.68, v_spacing=1.15)
+  → (boxes: list[VGroup], arrows: list[Arrow])
+  Vertical stack of rounded boxes with arrows. Example:
+    boxes, arrows = flow_column(["Encoder", "Attention", "Decoder"], [BLUE, TEAL, ORANGE])
+    self.play(LaggedStart(*[FadeIn(b) for b in boxes], lag_ratio=0.25))
+    self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.3))
+
+connect(obj_a, obj_b, color=WHITE, stroke_width=2, buff=0.1)  → Arrow
+  Arrow between two mobjects using boundary points. Example:
+    arr = connect(box_a, box_b, color=BLUE)
+    self.play(Create(arr))
+
+connect_curved(obj_a, obj_b, angle=TAU/4, color=WHITE, stroke_width=2)  → CurvedArrow
+
+heatmap(matrix, row_labels=None, col_labels=None, cell_size=0.62, center=ORIGIN)  → VGroup
+
+bar_chart(values, labels, colors=None, max_height=3.2, bar_width=0.85, spacing=1.35, center=ORIGIN)
+  → (bars, label_texts, baseline)
+
+animate_bars(scene, bars, baseline, lag_ratio=0.15, run_time=0.5)
+```
+
+## Spatial rules (enforced by validator — violations cause render failure)
+
+- NEVER `Arrow(LEFT*2, RIGHT*3)` — ALWAYS `connect(obj_a, obj_b)` or `Arrow(obj_a.get_right(), obj_b.get_left())`
+- NEVER `move_to([1.2, -0.5, 0])` — derive positions: `obj.next_to(other, DOWN, buff=0.3)` or `ORIGIN + RIGHT*x + UP*y`
+- NEVER `next_to(ORIGIN, ...)` — always pass a mobject, not a direction constant
+
+## Code requirements
+
+- Imports: `from manim import *`, `import numpy as np` only
+- One class inheriting `Scene`, named after the concept (e.g. `TransformerArchitectureScene`)
+- Title `Text("{{CONCEPT_NAME}}", font_size=34).to_edge(UP)` persists throughout
+- Complete and runnable — no `...`, no undefined variables
+
+## Verified animation calls only
+
+- `Create`, `Write`, `FadeIn`, `FadeOut`, `DrawBorderThenFill`
+- `Transform`, `ReplacementTransform`, `TransformMatchingShapes`
+- `obj.animate.shift()`, `.move_to()`, `.scale()`, `.set_color()`
+- `Indicate`, `Flash`, `Circumscribe`, `SurroundingRectangle`
+- `LaggedStart`, `AnimationGroup`, `Succession`
+- `ValueTracker`, `always_redraw`
+- Do NOT use: `ShowCreation`, `Pulse`, `GrowFromCenter`, `ShowPassingFlash`
+- Colors: `BLUE/BLUE_B/C/D`, `GREEN/GREEN_B/C`, `RED`, `ORANGE`, `YELLOW`, `WHITE`, `GREY/GREY_B/C/D`, `TEAL`, `PURPLE`, `PINK` — no `LIGHT_*` or `DARK_*`
+
+## ZERO LaTeX
+
+- `MathTex`, `Tex` → `Text("...", font_size=N)` with Unicode: α β θ λ μ σ ∇ √ ∞ → × ≈ ≤ ≥ ² ³ ₀ ₁ ₂
+- `get_x_axis_label/y` → `Text(...).next_to(axes.get_x_axis(), RIGHT, buff=0.15)`
+- `DecimalNumber`, `Integer`, `Variable` → `always_redraw(lambda: Text(f"{t.get_value():.2f}", font_size=18))`
+
+## Quality
+
+- Reveal components with `LaggedStart([FadeIn(x) for x in items], lag_ratio=0.2)`
+- `self.wait(1.5)` between major beats
+- Match figure colors as closely as possible with available Manim color constants
+
+Return ONLY the Python code inside ```python ... ``` fences.

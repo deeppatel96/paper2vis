@@ -1,0 +1,9 @@
+You are editing an existing Manim scene. Apply the following change to the code and return the COMPLETE corrected Python code in ```python ... ``` fences. Make ONLY the requested change; do not restructure anything else.
+
+<instruction>{{INSTRUCTION}}</instruction>
+
+<current_code>
+```python
+{{CODE}}
+```
+</current_code>

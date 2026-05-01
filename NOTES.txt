@@ -1,0 +1,97 @@
+Paper2Vis
+
+
+
+
+Should the input be something other than PDF since it's not great to extract from?
+- Tex source from Arvix?
+
+
+Replace annotations on bottom with sounds and subtitles?
+
+
+Use a video model to either generate the animation directly OR to be a reviewer for the Manim annimation to create a feedback loop to make the animations better
+
+
+
+
+references:
+Code2Video
+
+
+
+1. Hierarchical Layout & Module Extraction
+Instead of treating a paper as a flat text file, new systems like SciFig and FigAgent use a "hierarchical generation strategy".
+
+The Workflow: One agent parses the manuscript to identify functional modules (e.g., "Encoder," "Loss Function"), while another agent assigns specific "canvas regions" to these concepts.
+
+Why it's promising: It avoids the "spaghetti arrow" problem by generating logical inter-module connections rather than arbitrary point-to-point lines.
+
+
+
+FigAgent
+file:///Users/deeppatel/Downloads/FigAgent_Towards_Automatic_Method_Illustration_Fig.pdf
+
+
+Visualize Lean proofs or geometric parts of it?
+
+
+
+
+
+PARTS:
+- extracting what we want/can visualize
+- crafting the visualization idea/story
+- generating the visualization (w/ sound or annotations that explain it)
+	- allow updates to the sound/annotations by storing them somewhere or through update prompts (but need to keep those grounded / prevent hallucinations)
+
+
+
+
+
+
+
+
+
+Do a literature search for this and outline what has been done before
+
+
+Use a video model - talk to Gemini Pro to give ideas
+
+
+Try another model for code generation - use Claude Code model??
+
+
+
+
+
+Add a way to search for a paper in the UI - arvix?
+
+
+
+
+
+
+
+DONE
+Also let's add timing and estimated cost per animation and total for the paper
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

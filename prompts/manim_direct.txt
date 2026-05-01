@@ -1,0 +1,123 @@
+You are an expert Manim animator. Generate a complete, runnable Manim Community (v0.18+) Python scene directly from the concept below — no storyboard intermediate step.
+
+{{RAG_EXAMPLES}}
+
+<concept>
+Name: {{CONCEPT_NAME}}
+Description: {{CONCEPT_DESCRIPTION}}
+Visual type: {{VISUAL_TYPE}}
+Key variables: {{VARIABLES}}
+
+Shot list (implement these beats in order):
+{{SHOT_LIST}}
+
+Source text:
+{{RAW_TEXT}}
+</concept>
+
+## Layout helpers (auto-injected — use freely, NEVER redefine)
+
+```
+node_row(labels, colors=None, center=CONTENT_CENTER, spacing=1.5, radius=0.32)
+  → (circles: VGroup, texts: VGroup)
+
+side_by_side(stage_labels, stage_colors=None, center=CONTENT_CENTER, box_width=2.6, box_height=1.4, h_spacing=3.8)
+  → (boxes: list[VGroup], arrows: list[Arrow])   ← LEFT-TO-RIGHT only
+
+flow_column(stage_labels, stage_colors=None, center=CONTENT_CENTER, box_width=5.2, box_height=0.68, v_spacing=1.15)
+  → (boxes: list[VGroup], arrows: list[Arrow])   ← VERTICAL only
+
+connect(obj_a, obj_b, color=WHITE, stroke_width=2, buff=0.1) → Arrow
+connect_curved(obj_a, obj_b, angle=TAU/4, color=WHITE, stroke_width=2) → CurvedArrow
+
+heatmap(matrix, row_labels=None, col_labels=None, cell_size=0.62, center=CONTENT_CENTER)
+  → VGroup   (matrix values in [0,1])
+
+bar_chart(values, labels, colors=None, max_height=3.2, bar_width=0.85, spacing=1.35, center=CONTENT_CENTER)
+  → (bars: list, label_texts: list, baseline: Line)
+
+animate_bars(scene, bars, baseline, lag_ratio=0.15, run_time=0.5)
+```
+
+Auto-injected constants: `CONTENT_CENTER` (= DOWN*0.5), `CONTENT_TOP` (= UP*2.7),
+`LEFT_CENTER` (= CONTENT_CENTER + LEFT*3.2), `RIGHT_CENTER` (= CONTENT_CENTER + RIGHT*3.2).
+
+## Implementation rules
+
+**Show the computation.** Include concrete numeric values — attention weights, matrix entries, bar heights. A new learner must understand the mechanism from the animation alone, without reading text.
+
+**MANDATORY: Every scene must contain at least one dynamic transformation** — not just objects appearing. Use `Transform`/`ReplacementTransform` to morph objects, `ValueTracker`+`always_redraw` to animate changing values, or `obj.animate.scale/set_color` to show state change. An animation where every object only `FadeIn`s or `Write`s will be rejected.
+
+**3–5 beats.** Each beat introduces one key visual, waits 2 s, then fades out before the next. Never show more than one major element at a time.
+
+**Spatial rules:**
+- `CONTENT_CENTER` is your anchor. All objects must stay below `CONTENT_TOP` (y ≤ 2.7).
+- Title: `Text("...", font_size=34).to_edge(UP)` — always present, never removed.
+- NEVER `Arrow(LEFT*2, RIGHT*3)` — use `connect(obj_a, obj_b)` or `.get_right()/.get_left()`.
+- NEVER `move_to([x, y, z])` with literals — use `.next_to()` or `center + UP*n + RIGHT*m`.
+
+**Verified calls only:**
+- Create, Write, FadeIn, FadeOut, Transform, ReplacementTransform
+- `obj.animate.shift/move_to/scale/set_color`
+- Indicate, Flash, Circumscribe, SurroundingRectangle
+- LaggedStart, AnimationGroup, Succession
+- ValueTracker, always_redraw
+- `DrawBorderThenFill` ONLY on a single VMobject (Circle, Rectangle) — NOT on VGroup or lists.
+- Do NOT use: ShowCreation, Pulse, GrowFromCenter, GrowArrow, ShowPassingFlash.
+
+**Colors:** BLUE/BLUE_B/BLUE_C/BLUE_D, GREEN/GREEN_B/GREEN_C, RED, ORANGE, YELLOW,
+WHITE, GREY/GREY_B/GREY_C/GREY_D, TEAL, PURPLE — no LIGHT_* or DARK_*.
+
+**Equations — use MathTex (LaTeX is installed):** Prefer `MathTex(r"...")` for all math. Use `TransformMatchingShapes` to morph formulas step-by-step. Use `Text()` only for plain English labels and annotations.
+
+**Division safety:** guard with `max(val, 0.001)` before dividing by a variable.
+
+## Reference scene (study this pattern)
+
+```python
+from manim import *
+import numpy as np
+
+class SelfAttentionScene(Scene):
+    def construct(self):
+        title = Text("Self-Attention  ·  Attention Is All You Need", font_size=32).to_edge(UP)
+        self.play(FadeIn(title))
+        self.wait(0.5)
+
+        # Beat 1: token row
+        tokens = ["The", "cat", "sat", "on", "mat"]
+        circles, labels = node_row(tokens, [BLUE_C]*5, center=CONTENT_CENTER + UP*1.85)
+        self.play(LaggedStart(*[Create(c) for c in circles], lag_ratio=0.12))
+        self.play(LaggedStart(*[FadeIn(l) for l in labels], lag_ratio=0.12))
+        self.wait(1.0)
+
+        # Beat 2: attention weights from "sat"
+        weights = [0.03, 0.14, 0.68, 0.09, 0.06]
+        q_ring = Circle(radius=0.44, color=YELLOW, stroke_width=3).move_to(circles[2])
+        self.play(Create(q_ring))
+        w_objs = VGroup()
+        for i, w in enumerate(weights):
+            col = interpolate_color(GREY_C, YELLOW, min(1.0, w*2.6))
+            ln = Line(circles[2].get_center(), circles[i].get_center(),
+                      stroke_width=1.2+w*15, color=col, stroke_opacity=0.85)
+            wt = Text(f"{w:.2f}", font_size=14, color=col).next_to(circles[i], DOWN, buff=0.14)
+            w_objs.add(ln, wt)
+        self.play(LaggedStart(*[Create(o) for o in w_objs[::2]], lag_ratio=0.1))
+        self.play(LaggedStart(*[FadeIn(o) for o in w_objs[1::2]], lag_ratio=0.1))
+        self.wait(2.0)
+        self.play(FadeOut(w_objs), FadeOut(q_ring), FadeOut(circles), FadeOut(labels))
+
+        # Beat 3: full attention heatmap
+        attn = [[0.55,0.20,0.12,0.07,0.06],[0.18,0.48,0.22,0.07,0.05],
+                [0.03,0.14,0.68,0.09,0.06],[0.05,0.10,0.28,0.45,0.12],
+                [0.04,0.07,0.18,0.24,0.47]]
+        heat = heatmap(attn, row_labels=tokens, col_labels=tokens,
+                       cell_size=0.62, center=CONTENT_CENTER + DOWN*0.55)
+        self.play(FadeIn(heat), run_time=0.9)
+        note = Text("'sat' attends most to itself (0.68)", font_size=17, color=YELLOW)
+        note.next_to(heat, DOWN, buff=0.28)
+        self.play(FadeIn(note))
+        self.wait(2.5)
+```
+
+Return ONLY the Python code in ```python ... ``` fences.

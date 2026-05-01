@@ -1,0 +1,129 @@
+You are extracting micro-concepts from an academic paper section for short, focused mathematical animations.
+
+Each concept must be a **single atomic operation** — one equation computing a result, one transformation applied, one logical step proven. A viewer should understand it in 20–60 seconds without reading the paper.
+
+## CRITICAL RULE: Only extract concepts that are DIRECTLY IN THE SECTION TEXT
+
+Do NOT invent concepts, do NOT import examples from other papers. If the section contains Gödel numbering, animate Gödel numbering. If it contains differential equations, animate those. If it contains attention scores, animate attention scores.
+
+**Every concept you return MUST be traceable to a specific equation, formula, or statement in the provided section.**
+
+## The atomic test — apply this strictly
+
+Ask: "Can I show THIS paper's specific operation with concrete values changing on screen in one shot?"
+
+**REJECT these:**
+- Concepts not mentioned in the section text
+- Vague overviews ("the proof works by...", "the system uses...")
+- Multi-step processes that span more than one formula
+- Concepts borrowed from other papers or your training data
+- Concepts where you cannot name at least one specific value, symbol, or formula from the text
+
+**ACCEPT these — atomic operations with concrete values from the actual paper:**
+- ML papers: "Softmax of scores [1.2, 0.3, 2.1] → probabilities [0.15, 0.07, 0.78]"
+- Logic/math: "Gödel number of '¬P(0)' encodes as integer 243000000"
+- Geometry: "Vector [3, 4] projected onto unit vector [0.6, 0.8] gives scalar 5.0"
+- Physics: "Harmonic oscillator x(t) = A·cos(ωt): amplitude A=2, frequency ω=3"
+- Statistics: "Bayes update: P(H|E) = 0.6·0.3 / 0.4 = 0.45"
+- Analysis: "ε-δ: |x - 2| < δ=0.1 guarantees |x² - 4| < ε=0.5"
+
+## What to animate: operations with values, not labels in boxes
+
+Good: a formula with numbers substituted in, a value changing step by step, a logical substitution shown symbolically, a geometric transformation applied to coordinates.
+
+Bad: a box labeled "Encoder" → another box labeled "Decoder". A diagram of system components. A timeline of paper history.
+
+## Visual types — pick the best fit for THIS paper's content
+
+1. **equation_transform** — a formula computing step-by-step (most papers have this)
+2. **geometric** — a vector, shape, or space being transformed
+3. **number_flow** — values propagating through nodes (3–5 nodes max)
+4. **weight_update** — a parameter animating from one value to another
+5. **matrix_op** — a small matrix (≤4×4) computation
+6. **diagram** — last resort: only when the concept is genuinely structural
+
+## Shot list rules — 2 to 4 beats
+
+Each shot_list has **2–4 beats** depending on complexity:
+- Simple computations (one formula, one result): **2 beats**
+- Multi-step derivations or comparisons: **3 beats**
+- Full worked examples with intermediate steps: **4 beats**
+
+Beat guidelines:
+- **Beat 1**: Show the initial state with THIS paper's specific values labeled
+- **Middle beats** (if needed): Show intermediate transformation steps with concrete values at each step
+- **Final beat**: Show the result / conclusion with concrete values; add a text label summarizing what the viewer just saw
+
+**Good shot list for a logic paper (2 beats):**
+```
+1. "Show formula '¬Provable(n)' in MathTex centered. Label it 'The Gödel sentence G'. Show Gödel number n=2486 in a box below."
+2. "Animate: highlight 'Provable(n)' in RED → show it evaluating to FALSE. Then highlight the outer '¬' turning the result to TRUE. Text appears: 'G is true but not provable.' Viewer sees the self-referential paradox."
+```
+
+**Good shot list for a multi-step derivation (3 beats):**
+```
+1. "Show attention formula: score(Q, K) = QKᵀ / √d_k. Label Q=[1,0], K=[0.8,0.6], d_k=2."
+2. "Animate: compute dot product QKᵀ = 0.8, then divide by √2 ≈ 1.41, result = 0.57 appears in a highlighted box."
+3. "Apply softmax: show [0.57, 0.23, 0.19] → probabilities [0.44, 0.30, 0.26] appearing. Label 'token 1 gets 44% of attention'."
+```
+
+## Description requirements — be specific and rich
+
+Each description must be **3–5 sentences** covering:
+1. What this concept is (name the specific formula, theorem, or operation)
+2. Where it appears in the paper and why it matters to the paper's argument
+3. What concrete values, symbols, or parameters are involved (quote from the text)
+4. What the viewer will literally see change on screen during the animation
+5. (Optional) What insight the animation reveals that reading the formula alone would not
+
+**Bad description:** "Shows how the attention mechanism works in transformers."
+
+**Good description:** "This concept animates the scaled dot-product attention formula score(Q,K) = QKᵀ/√d_k from Section 3.2. In the paper, this scaling by √d_k prevents the softmax from saturating in high-dimensional spaces, which is a key architectural decision. The animation uses the paper's example values Q=[1,0], K=[0.8,0.6], d_k=64 to compute a concrete score of 0.1. The viewer watches the raw dot product shrink from 0.8 to 0.1 as the √64 divisor is applied, then sees the softmax concentrate probability mass. This makes the 'why we scale' intuition visceral rather than abstract."
+
+## Distinctiveness — avoid redundant concepts
+
+Before finalizing your list, verify that each concept shows a **visually distinct operation**. Two concepts are redundant if they would produce nearly identical animations (e.g., two different softmax examples from the same section). If they are redundant, keep the one with more concrete values and drop the other.
+
+## Quality self-filter — apply before returning
+
+Scan each concept you've drafted and ask these questions:
+1. **Value check**: Can I name at least one specific number, formula, or symbol from the paper text to put on screen? If not → DROP IT.
+2. **Atomic check**: Does this concept span more than one formula or proof step? If yes → SPLIT or DROP.
+3. **Distinctiveness check**: Is this visually distinct from another concept in my list? If not → DROP the weaker one.
+4. **Animation check**: Will something actually MOVE or CHANGE on screen (not just appear)? If not → REWRITE the shot list or DROP.
+
+Only return concepts that pass all four checks.
+
+## Extract up to {{MAX_CONCEPTS}} concepts
+
+Prefer more smaller concepts over fewer larger ones. Extract ALL distinct atomic operations you find in the section — even if unusual or domain-specific. But apply the quality self-filter strictly — 3 excellent concepts beat 8 mediocre ones.
+
+<section>
+{{SECTION_TEXT}}
+</section>
+
+<output_format>
+Return valid JSON only in ```json ... ``` fences.
+
+```json
+{
+  "concepts": [
+    {
+      "name": "Short name referencing the paper's actual content",
+      "description": "3-5 sentences: what the concept is, where it appears, what concrete values are involved, what the viewer sees change, what insight the animation reveals",
+      "visual_type": "equation_transform",
+      "variables": ["specific values or symbols from the paper text"],
+      "shot_list": [
+        "Beat 1: specific objects and values from THIS paper's section",
+        "Beat 2: the transformation, with concrete numbers from THIS paper",
+        "Beat 3 (optional): result or conclusion with a text label summarizing the insight"
+      ]
+    }
+  ]
+}
+```
+
+Valid visual_type values: equation_transform | geometric | number_flow | weight_update | matrix_op | diagram
+
+If the section contains no visualizable atomic operations (e.g. it's a bibliography or acknowledgements), return `{"concepts": []}`.
+</output_format>

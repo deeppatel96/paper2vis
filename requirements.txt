@@ -1,0 +1,7 @@
+pymupdf
+openai
+anthropic
+manim
+python-dotenv
+rich
+typer

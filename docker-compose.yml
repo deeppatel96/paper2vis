@@ -1,0 +1,42 @@
+services:
+  paper2vis:
+    build: .
+    image: paper2vis:latest
+    volumes:
+      - ./papers:/app/papers        # drop PDFs here
+      - ./output:/app/output        # rendered videos appear here
+      - ./src:/app/src              # live-reload src during dev
+      - ./prompts:/app/prompts      # tweak prompts without rebuild
+    env_file:
+      - .env
+    # Default: show help. Override with: docker compose run paper2vis papers/foo.pdf
+    command: ["--help"]
+
+  # Convenience: run pipeline on a specific paper
+  # Usage: docker compose run --rm run papers/myfile.pdf
+  run:
+    build: .
+    image: paper2vis:latest
+    volumes:
+      - ./papers:/app/papers
+      - ./output:/app/output
+      - ./src:/app/src
+      - ./prompts:/app/prompts
+    env_file:
+      - .env
+    entrypoint: ["python", "-m", "src.pipeline"]
+
+  # Dev shell
+  shell:
+    build: .
+    image: paper2vis:latest
+    volumes:
+      - ./papers:/app/papers
+      - ./output:/app/output
+      - ./src:/app/src
+      - ./prompts:/app/prompts
+    env_file:
+      - .env
+    entrypoint: ["bash"]
+    stdin_open: true
+    tty: true

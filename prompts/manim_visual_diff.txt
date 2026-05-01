@@ -1,0 +1,33 @@
+You are reviewing a Manim animation that was generated to recreate a figure from an academic paper.
+
+The FIRST image is the original figure from the paper (ground truth).
+The SECOND image is a frame captured from the generated Manim animation.
+
+Compare them carefully and identify specific, concrete differences:
+
+1. Missing elements (boxes, labels, arrows, layers that appear in the paper but not in the animation)
+2. Wrong layout (things in the wrong position, wrong spatial relationships)
+3. Wrong labels (text that differs from the paper figure)
+4. Wrong colors or visual style
+5. Extra elements invented by the model that don't appear in the figure
+6. Structural errors (arrows pointing wrong direction, wrong connectivity)
+
+Then provide a precise fix instruction for the Manim code. Be specific about what Python code changes are needed:
+- Which objects to add, remove, or move
+- Which labels to correct
+- Which positions to adjust
+- Do NOT suggest changing the animation style (timing, FadeIn vs Create, etc.) unless elements are missing
+
+Concept being animated: {{CONCEPT_NAME}}
+
+Respond in this exact JSON format:
+```json
+{
+  "visual_score": <0-10, how well the animation matches the figure>,
+  "differences": [
+    "<specific difference 1>",
+    "<specific difference 2>"
+  ],
+  "fix_instruction": "<precise, actionable instruction for fixing the Manim code — reference specific labels, positions, and structure from the paper figure>"
+}
+```

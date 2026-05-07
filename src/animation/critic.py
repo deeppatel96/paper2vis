@@ -9,6 +9,7 @@ clearly explains the concept.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -16,13 +17,15 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+_log = logging.getLogger(__name__)
+
 from src.llm_utils import call_llm_vision
 from src.animation._utils import _ffmpeg_bin, get_video_duration
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
-VISION_MODEL = "gpt-4o"
-VISION_PROVIDER = "openai"
+VISION_MODEL = os.environ.get("LLM_MODEL", "gpt-4.1")
+VISION_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
 
 
 @dataclass
@@ -98,10 +101,11 @@ class ManimCritic:
         except Exception as exc:
             msg = str(exc).lower()
             is_rate_limit = "429" in msg or "rate limit" in msg or "rate_limit" in msg
-            if is_rate_limit and self.provider == "openai" and self.model != "gpt-4o-mini":
+            _mini = os.environ.get("LLM_MODEL_MINI", "gpt-4.1-mini")
+            if is_rate_limit and self.provider == "openai" and self.model != _mini:
                 return call_llm_vision(
                     provider="openai",
-                    model="gpt-4o-mini",
+                    model=_mini,
                     prompt=prompt,
                     image_paths=image_paths,
                     max_tokens=1024,
@@ -159,8 +163,14 @@ class ManimCritic:
                     issues=data.get("issues", []),
                     fix_instruction=data.get("fix_instruction", ""),
                 )
-            except (json.JSONDecodeError, KeyError, ValueError):
-                pass
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                _log.warning(
+                    "Critic response JSON parse failed (%s). Raw response (truncated):\n%s",
+                    exc, raw[:500],
+                )
+                raise ValueError(f"Could not parse critic JSON response: {exc}") from exc
 
-        # Fallback: if we can't parse, assume pass so we don't block the pipeline
-        return CritiqueResult(passes=True, score=6, issues=["Could not parse critic response"], fix_instruction="")
+        _log.warning(
+            "Critic response contained no JSON block. Raw response (truncated):\n%s", raw[:500]
+        )
+        raise ValueError("Critic response contained no JSON block")

@@ -4,7 +4,9 @@ Bridges the existing Pipeline to the API layer.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -31,6 +33,39 @@ def _short_error(exc_str: str, limit: int = 130) -> str:
         if ln and not ln.startswith("#") and len(ln) > 5:
             return ln[:limit]
     return exc_str[:limit]
+
+
+def _actionable_error(exc_str: str, max_chars: int = 2000) -> str:
+    """Extract the most actionable portion of a Manim error for the fix LLM.
+
+    Manim stderr is verbose. We pull the last traceback block and the final
+    error line so the LLM gets signal, not noise.
+    """
+    # Try to find the last Error/Exception line
+    lines = exc_str.splitlines()
+    error_lines: list[str] = []
+    in_traceback = False
+    for ln in lines:
+        stripped = ln.strip()
+        if stripped.startswith("Traceback (most recent call last"):
+            in_traceback = True
+            error_lines = [ln]
+        elif in_traceback:
+            error_lines.append(ln)
+            # An error line ends the traceback block
+            if re.match(r"^\s*\w+Error\b|\w+Exception\b", stripped):
+                in_traceback = False
+        elif re.match(r"^\s*\w+(Error|Exception)\b", stripped):
+            error_lines.append(ln)
+
+    if error_lines:
+        summary = "\n".join(error_lines)
+        return summary[:max_chars]
+    return exc_str[:max_chars]
+
+
+def _code_hash(code: str) -> str:
+    return hashlib.md5(code.encode()).hexdigest()
 
 
 def _diff_trigger(report_json: str, limit: int = 130) -> str:
@@ -287,6 +322,7 @@ def _process_concept(
     history: list[dict] = []
     last_error: str | None = None
 
+    seen_hashes: set[str] = {_code_hash(current_code)}
     for attempt in range(1, max_retries + 1):
         try:
             label = f"[{name}] Rendering…" if attempt == 1 \
@@ -312,7 +348,15 @@ def _process_concept(
             last_error = str(exc)
             if attempt < max_retries:
                 try:
-                    current_code = codegen.fix_code(current_code, str(exc))
+                    actionable = _actionable_error(last_error)
+                    fixed_code = codegen.fix_code(current_code, actionable)
+                    new_hash = _code_hash(fixed_code)
+                    if new_hash in seen_hashes:
+                        emit({"type": "warning",
+                              "message": f"[{name}] LLM fix produced identical code — stopping retry"})
+                        break
+                    seen_hashes.add(new_hash)
+                    current_code = fixed_code
                 except Exception:
                     break
             else:

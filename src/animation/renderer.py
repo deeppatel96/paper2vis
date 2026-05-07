@@ -74,7 +74,7 @@ def _find_manim() -> str:
     return found if found else "manim"
 
 
-_LATEX_PATCH = '''\
+_LATEX_PATCH_TEMPLATE = '''\
 # ── LaTeX pipeline patch (tectonic + PyMuPDF instead of latex + dvisvgm) ──
 import manim.utils.tex_file_writing as _tfw_mod
 import subprocess as _sp
@@ -86,7 +86,7 @@ def _tectonic_compile(tex_file, tex_compiler, output_format):
     pdf_out = _PPath(tex_file).with_suffix(".pdf")
     tex_dir = pdf_out.parent
     if not pdf_out.exists():
-        cmd = ["/Users/deeppatel/miniforge3/bin/tectonic",
+        cmd = ["__TECTONIC_PATH__",
                "--outfmt", "pdf", "--outdir", str(tex_dir), str(tex_file)]
         cp = _sp.run(cmd, capture_output=True)
         if cp.returncode != 0:
@@ -115,6 +115,30 @@ _tfw_mod.convert_to_svg = _pymupdf_to_svg
 '''
 
 
+def _build_latex_patch() -> str:
+    """Build the LaTeX patch with the resolved tectonic binary path.
+
+    Checks TECTONIC_PATH env var first, then PATH, then common conda locations.
+    Returns an empty string if tectonic is not found (Manim falls back to system LaTeX).
+    """
+    import logging
+    import shutil
+    tectonic = os.getenv("TECTONIC_PATH") or shutil.which("tectonic")
+    if not tectonic:
+        for prefix in [Path.home() / "miniforge3", Path.home() / "miniconda3", Path.home() / "anaconda3"]:
+            candidate = prefix / "bin" / "tectonic"
+            if candidate.exists():
+                tectonic = str(candidate)
+                break
+    if not tectonic:
+        logging.getLogger(__name__).warning(
+            "tectonic not found; LaTeX patch disabled. "
+            "Set TECTONIC_PATH env var to point at the tectonic binary."
+        )
+        return ""
+    return _LATEX_PATCH_TEMPLATE.replace("__TECTONIC_PATH__", tectonic)
+
+
 def _inject_helpers(code: str) -> str:
     """
     Insert the LaTeX patch + layout helper functions after the import block.
@@ -131,7 +155,9 @@ def _inject_helpers(code: str) -> str:
             last_import = i
 
     insert_at = last_import + 1 if last_import >= 0 else 0
-    injected = lines[:insert_at] + ["", _LATEX_PATCH, "", helpers, ""] + lines[insert_at:]
+    latex_patch = _build_latex_patch()
+    patch_lines = ["", latex_patch, "", helpers, ""] if latex_patch else ["", helpers, ""]
+    injected = lines[:insert_at] + patch_lines + lines[insert_at:]
     return "\n".join(injected)
 
 
@@ -211,11 +237,17 @@ def _static_fix(code: str) -> str:
     #    Create/FadeIn/Write/etc., wrap it in Create().
     _animation_wrappers = re.compile(
         r"\b(Create|FadeIn|FadeOut|Write|Transform|ReplacementTransform|"
+        r"TransformMatchingShapes|FadeTransform|MoveToTarget|Restore|"
+        r"ApplyFunction|ApplyMethod|ApplyMatrix|ApplyComplexFunction|"
         r"Indicate|Flash|Circumscribe|DrawBorderThenFill|LaggedStart|"
-        r"AnimationGroup|Succession|GrowFromCenter|ShowCreation)\s*\("
+        r"AnimationGroup|Succession|GrowFromCenter|ShowCreation|"
+        r"SpiralIn|Rotate|ScaleInPlace|MaintainPositionRelativeTo)\s*\("
     )
     def _fix_play_args(m: re.Match) -> str:
         inner = m.group(1)
+        # Skip if newline in inner — multi-line play() calls have correct syntax already
+        if "\n" in inner:
+            return m.group(0)
         # If it already contains an animation wrapper, leave it alone
         if _animation_wrappers.search(inner):
             return m.group(0)
@@ -243,6 +275,7 @@ class ManimRenderer:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         code = _static_fix(code)
+        self._check_syntax(code)
         self._check_banned_apis(code)
         self._check_spatial(code)
         self._check_dynamic(code)
@@ -291,7 +324,15 @@ class ManimRenderer:
                             break
             env["PATH"] = os.pathsep.join(extra_bins) + os.pathsep + env.get("PATH", "")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            _timeout = int(os.getenv("MANIM_TIMEOUT", "300"))
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=_timeout)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(
+                    f"Manim render timed out after {_timeout}s. "
+                    "The scene may contain an infinite loop or a very long animation duration. "
+                    "Reduce total wait() / play() duration or split into smaller scenes."
+                )
 
             if result.returncode != 0:
                 raise RuntimeError(
@@ -307,12 +348,28 @@ class ManimRenderer:
 
     # ------------------------------------------------------------------
 
+    def _check_syntax(self, code: str) -> None:
+        """Raise immediately on Python syntax errors so the fix loop gets a clean message."""
+        import ast
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            raise RuntimeError(
+                f"SyntaxError in generated code at line {exc.lineno}: {exc.msg}\n"
+                f"Offending text: {exc.text!r}\n\n"
+                "Fix the syntax error — check for unmatched brackets, missing commas, "
+                "or unclosed parentheses."
+            ) from exc
+
     def _check_banned_apis(self, code: str) -> None:
         """Raise early with a clear message if truly broken APIs are detected."""
         # MathTex/Tex are now allowed — pdflatex is on the PATH via conda env.
         # Only block APIs that don't exist in Manim Community v0.20.
 
         # Helper redefinitions are now stripped by _static_fix before this runs.
+
+        # Normalize whitespace so multi-space or newline-split calls are still caught
+        normalized = re.sub(r"\s+", " ", code)
 
         deprecated = {
             "ShowCreation(": "Create(",
@@ -327,7 +384,7 @@ class ManimRenderer:
             "DARK_GREY": "GREY_D or GREY_E",
             "LIGHT_RED": "RED_A or RED_B",
         }
-        found = {k: v for k, v in deprecated.items() if k in code}
+        found = {k: v for k, v in deprecated.items() if k in normalized}
         if found:
             fixes = ", ".join(f"'{k}' → '{v}'" for k, v in found.items())
             raise RuntimeError(
@@ -338,7 +395,7 @@ class ManimRenderer:
         undefined_checks = {
             "self.camera.frame": "self.camera.frame requires MovingCameraScene, not Scene. Either change 'Scene' to 'MovingCameraScene' in the class definition, or remove camera moves.",
         }
-        found_undef = {k: v for k, v in undefined_checks.items() if k in code}
+        found_undef = {k: v for k, v in undefined_checks.items() if k in normalized}
         if found_undef:
             msgs = "; ".join(found_undef.values())
             raise RuntimeError(f"Code uses wrong Scene type: {msgs}")

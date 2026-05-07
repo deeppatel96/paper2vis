@@ -138,11 +138,101 @@ class WeightedConnectionsBeat(BaseModel):
         return [[max(0.0, min(1.0, v)) for v in row] for row in w]
 
 
+class AttentionMatrixBeat(BaseModel):
+    """Attention score matrix heatmap with optional query-row highlight."""
+    type: Literal["attention_matrix"]
+    query_labels: List[str] = Field(min_length=1, max_length=8)
+    key_labels: List[str] = Field(min_length=1, max_length=8)
+    scores: List[List[float]]  # n_queries × n_keys, values in [0,1]
+    highlight_query: Optional[int] = None  # index of query row to highlight
+    title: Optional[str] = None
+
+    @field_validator("scores")
+    @classmethod
+    def clamp_scores(cls, s: List[List[float]]) -> List[List[float]]:
+        return [[max(0.0, min(1.0, v)) for v in row] for row in s]
+
+
+class BayesDiagramBeat(BaseModel):
+    """Animate a Bayesian update: prior bar chart transforms into posterior."""
+    type: Literal["bayes"]
+    hypotheses: List[str] = Field(min_length=2, max_length=6)
+    prior: List[float]       # unnormalized; will be normalised automatically
+    likelihood: List[float]  # P(evidence | hypothesis) for each hypothesis
+    title: Optional[str] = None
+
+    @model_validator(mode="after")
+    def align_and_normalize(self) -> "BayesDiagramBeat":
+        n = len(self.hypotheses)
+        self.prior = (list(self.prior) + [1.0 / n] * n)[:n]
+        self.likelihood = (list(self.likelihood) + [0.5] * n)[:n]
+        total = sum(self.prior)
+        if total > 0:
+            self.prior = [p / total for p in self.prior]
+        return self
+
+
+class GradientStepBeat(BaseModel):
+    """Loss curve with an animated gradient-descent dot trajectory."""
+    type: Literal["gradient_step"]
+    fn_type: Literal["quadratic", "cubic", "sine"] = "quadratic"
+    a: float = 1.0   # leading coefficient
+    b: float = 0.0   # quadratic: ax²+bx+c; cubic: ax³+bx²+cx+d; sine: a·sin(b·x)+c
+    c: float = 0.0
+    d: float = 0.0   # cubic only: constant term
+    x_range: List[float] = [-3.0, 3.0]
+    start_x: float = 2.5
+    learning_rate: float = 0.3
+    n_steps: int = Field(default=5, ge=1, le=8)
+    title: Optional[str] = None
+
+    @field_validator("x_range")
+    @classmethod
+    def valid_range(cls, v: List[float]) -> List[float]:
+        if len(v) < 2 or v[0] >= v[1]:
+            return [-3.0, 3.0]
+        return v[:2]
+
+
+class EigendecompositionBeat(BaseModel):
+    """2×2 (or 3×3) matrix with eigenvector arrows on a coordinate plane."""
+    type: Literal["eigendecomposition"]
+    matrix: List[List[float]]
+    eigenvalues: List[float]
+    eigenvectors: List[List[float]]  # each sub-list is one eigenvector (2- or 3-D)
+    labels: Optional[List[str]] = None  # e.g. ["λ₁", "λ₂"]
+    title: Optional[str] = None
+
+    @field_validator("matrix")
+    @classmethod
+    def validate_square(cls, m: List[List[float]]) -> List[List[float]]:
+        n = len(m)
+        if n < 2 or n > 3:
+            raise ValueError("Only 2×2 and 3×3 matrices supported")
+        if not all(len(row) == n for row in m):
+            raise ValueError("Matrix must be square")
+        return m
+
+
+class TreeBeat(BaseModel):
+    """Tree (or DAG) with optional BFS/DFS traversal highlight animation."""
+    type: Literal["tree"]
+    nodes: List[str] = Field(min_length=2, max_length=15)
+    edges: List[List[int]]           # [[parent_idx, child_idx], ...]
+    traversal_order: Optional[List[int]] = None  # node indices to highlight in order
+    title: Optional[str] = None
+    node_color: Optional[str] = "BLUE"
+    highlight_color: Optional[str] = "YELLOW"
+
+
 Beat = Annotated[
     Union[
         NodeRowBeat, HeatmapBeat, BarChartBeat,
         SideBySideBeat, FlowColumnBeat, TextBeat,
         WeightedConnectionsBeat,
+        AttentionMatrixBeat, BayesDiagramBeat,
+        GradientStepBeat, EigendecompositionBeat,
+        TreeBeat,
     ],
     Field(discriminator="type"),
 ]
@@ -370,6 +460,312 @@ class DSLCompiler:
             group_parts = f"_txt{idx}" + (f", {sub_var}" if sub_var else "")
             lines.append(f"{v} = VGroup({group_parts})")
 
+        elif isinstance(beat, AttentionMatrixBeat):
+            n_q = len(beat.query_labels)
+            n_k = len(beat.key_labels)
+            ql_r = repr(beat.query_labels)
+            kl_r = repr(beat.key_labels)
+            sc_r = repr(beat.scores)
+            lines = [f"# Beat {idx+1}: attention matrix"]
+            title_var = ""
+            if beat.title:
+                title_var = f"_at{idx}"
+                lines += [
+                    f'{title_var} = Text("{_safe_str(beat.title)}", font_size=20)'
+                    f".move_to(CONTENT_CENTER + UP*1.85)",
+                    f"self.play(FadeIn({title_var}))",
+                ]
+            lines += [
+                f"_heat{idx} = heatmap({sc_r}, row_labels={ql_r}, col_labels={kl_r},"
+                f" center=CONTENT_CENTER + DOWN*0.2)",
+                f"self.play(FadeIn(_heat{idx}), run_time=0.9)",
+            ]
+            if beat.highlight_query is not None and 0 <= beat.highlight_query < n_q:
+                row_y = round((n_q - 1) / 2.0 - beat.highlight_query, 4) * 0.62
+                lines += [
+                    f"_hrow{idx} = Rectangle(width={n_k}*0.62+0.1, height=0.56,"
+                    f" color=YELLOW, stroke_width=2.5, fill_opacity=0.12, fill_color=YELLOW)",
+                    f"_hrow{idx}.move_to(CONTENT_CENTER + DOWN*0.2 + UP*{row_y:.4f})",
+                    f"self.play(Create(_hrow{idx}))",
+                ]
+            lines.append("self.wait(2.5)")
+            group_parts = [f"_heat{idx}"]
+            if beat.highlight_query is not None:
+                group_parts.append(f"_hrow{idx}")
+            if title_var:
+                group_parts.insert(0, title_var)
+            lines.append(f"{v} = VGroup({', '.join(group_parts)})")
+
+        elif isinstance(beat, BayesDiagramBeat):
+            prior = list(beat.prior)
+            likelihood = list(beat.likelihood)
+            unnorm = [p * l for p, l in zip(prior, likelihood)]
+            total = sum(unnorm) or 1e-9
+            posterior = [u / total for u in unnorm]
+
+            n = len(beat.hypotheses)
+            hyp_r = repr(beat.hypotheses)
+            prior_r = repr([round(p, 4) for p in prior])
+            pc_r = repr(["BLUE_C"] * n)
+            transform_parts = []
+            for j, (pv, postv) in enumerate(zip(prior, posterior)):
+                sf = round(max(postv, 0.001) / max(pv, 0.001), 4)
+                transform_parts.append(
+                    f"_bars{idx}[{j}].animate.stretch({sf}, 1, about_edge=DOWN).set_color(GREEN_C)"
+                )
+            lines = [f"# Beat {idx+1}: Bayes update"]
+            title_var = ""
+            if beat.title:
+                title_var = f"_byt{idx}"
+                lines += [
+                    f'{title_var} = Text("{_safe_str(beat.title)}", font_size=20)'
+                    f".move_to(CONTENT_CENTER + UP*1.85)",
+                    f"self.play(FadeIn({title_var}))",
+                ]
+            lines += [
+                f"_bars{idx}, _blbls{idx}, _bbase{idx} = bar_chart({prior_r}, {hyp_r},"
+                f" colors={pc_r}, center=CONTENT_CENTER + DOWN*0.3)",
+                f"self.play(Create(_bbase{idx}))",
+                f"animate_bars(self, _bars{idx}, _bbase{idx})",
+                f"self.play(LaggedStart(*[FadeIn(l) for l in _blbls{idx}], lag_ratio=0.1))",
+                f"self.wait(1.2)",
+                f'_bform{idx} = Text("Posterior ∝ Likelihood × Prior", font_size=15, color=GREY_B)'
+                f".move_to(CONTENT_CENTER + UP*1.5)",
+                f"self.play(FadeIn(_bform{idx}))",
+                f"self.wait(0.8)",
+                f"self.play({', '.join(transform_parts)}, run_time=1.5)",
+                f"self.wait(2.0)",
+            ]
+            group_parts = [f"VGroup(*_bars{idx}, *_blbls{idx}, _bbase{idx}, _bform{idx})"]
+            if title_var:
+                group_parts.insert(0, title_var)
+            lines.append(f"{v} = VGroup({', '.join(group_parts)})")
+
+        elif isinstance(beat, GradientStepBeat):
+            import math as _math
+            a, b, c, d = beat.a, beat.b, beat.c, beat.d
+            ft = beat.fn_type
+            x1, x2 = beat.x_range[0], beat.x_range[1]
+            lr = beat.learning_rate
+
+            if ft == "quadratic":
+                fn = lambda x, _a=a, _b=b, _c=c: _a*x**2 + _b*x + _c
+                dfn = lambda x, _a=a, _b=b: 2*_a*x + _b
+                fn_str = f"lambda x: {a}*x**2 + {b}*x + {c}"
+            elif ft == "cubic":
+                fn = lambda x, _a=a, _b=b, _c=c, _d=d: _a*x**3 + _b*x**2 + _c*x + _d
+                dfn = lambda x, _a=a, _b=b, _c=c: 3*_a*x**2 + 2*_b*x + _c
+                fn_str = f"lambda x: {a}*x**3 + {b}*x**2 + {c}*x + {d}"
+            else:  # sine
+                fn = lambda x, _a=a, _b=b, _c=c: _a*_math.sin(_b*x) + _c
+                dfn = lambda x, _a=a, _b=b: _a*_b*_math.cos(_b*x)
+                fn_str = f"lambda x: {a}*np.sin({b}*x) + {c}"
+
+            # Pre-compute trajectory in Python (safe, no Manim involved)
+            cur_x = max(x1 + 0.1, min(x2 - 0.1, beat.start_x))
+            trajectory = [(cur_x, fn(cur_x))]
+            for _ in range(beat.n_steps):
+                grad = dfn(cur_x)
+                cur_x = max(x1 + 0.05, min(x2 - 0.05, cur_x - lr * float(grad)))
+                trajectory.append((cur_x, float(fn(cur_x))))
+
+            xs = [x1 + (x2 - x1) * i / 59 for i in range(60)]
+            ys = [float(fn(x)) for x in xs] + [pt[1] for pt in trajectory]
+            y1 = round(min(ys) - 0.8, 1)
+            y2 = round(max(ys) + 0.8, 1)
+            x_step = round((x2 - x1) / 6, 1) or 0.5
+            y_step = max(0.5, round((y2 - y1) / 5, 1))
+            traj_r = repr([(round(x, 4), round(y, 4)) for x, y in trajectory])
+
+            lines = [f"# Beat {idx+1}: gradient descent ({ft})"]
+            title_var = ""
+            if beat.title:
+                title_var = f"_gdt{idx}"
+                lines += [
+                    f'{title_var} = Text("{_safe_str(beat.title)}", font_size=20)'
+                    f".move_to(CONTENT_CENTER + UP*1.85)",
+                    f"self.play(FadeIn({title_var}))",
+                ]
+            lines += [
+                f'_axes{idx} = Axes(x_range=[{x1}, {x2}, {x_step}], y_range=[{y1}, {y2}, {y_step}], x_length=6.0, y_length=3.5, axis_config={{"color": GREY_B, "tip_length": 0.15}})',
+                f"_axes{idx}.move_to(CONTENT_CENTER + DOWN*0.3)",
+                f"_curve{idx} = _axes{idx}.plot({fn_str}, color=BLUE_C, stroke_width=2.5)",
+                f"self.play(Create(_axes{idx}), Create(_curve{idx}), run_time=1.0)",
+                f"_traj{idx} = {traj_r}",
+                f"_dot{idx} = Dot(_axes{idx}.c2p(_traj{idx}[0][0], _traj{idx}[0][1]), color=RED, radius=0.1)",
+                f"self.play(FadeIn(_dot{idx}))",
+                f"for _xt, _yt in _traj{idx}[1:]:",
+                f"    _ndot = Dot(_axes{idx}.c2p(_xt, _yt), color=RED, radius=0.1)",
+                f"    _garr = Arrow(_dot{idx}.get_center(), _axes{idx}.c2p(_xt, _yt), buff=0.05, stroke_width=2, max_tip_length_to_length_ratio=0.3, color=YELLOW)",
+                f"    self.play(Create(_garr), run_time=0.35)",
+                f"    self.play(ReplacementTransform(_dot{idx}, _ndot), run_time=0.45)",
+                f"    self.remove(_garr)",
+                f"    _dot{idx} = _ndot",
+                f"self.wait(1.5)",
+            ]
+            group_parts = [f"_axes{idx}", f"_curve{idx}", f"_dot{idx}"]
+            if title_var:
+                group_parts.insert(0, title_var)
+            lines.append(f"{v} = VGroup({', '.join(group_parts)})")
+
+        elif isinstance(beat, EigendecompositionBeat):
+            n = len(beat.matrix)
+            labels = beat.labels or [f"e{i+1}" for i in range(len(beat.eigenvalues))]
+
+            # Normalise matrix to [0,1] for heatmap colouring
+            flat = [val for row in beat.matrix for val in row]
+            mn, mx = min(flat), max(flat)
+            spread = max(mx - mn, 1e-9)
+            norm_matrix = [[(val - mn) / spread for val in row] for row in beat.matrix]
+            norm_r = repr([[round(val, 4) for val in row] for row in norm_matrix])
+            idx_labels = [str(i) for i in range(n)]
+            rl_r = repr(idx_labels)
+
+            lines = [f"# Beat {idx+1}: eigendecomposition ({n}×{n})"]
+            title_var = ""
+            if beat.title:
+                title_var = f"_edt{idx}"
+                lines += [
+                    f'{title_var} = Text("{_safe_str(beat.title)}", font_size=20)'
+                    f".move_to(CONTENT_CENTER + UP*1.85)",
+                    f"self.play(FadeIn({title_var}))",
+                ]
+            lines += [
+                f"_mat{idx} = heatmap({norm_r}, row_labels={rl_r}, col_labels={rl_r},"
+                f" center=LEFT_CENTER + UP*0.2)",
+                f"self.play(FadeIn(_mat{idx}), run_time=0.8)",
+                f"self.wait(0.4)",
+            ]
+            all_parts = [f"_mat{idx}"]
+
+            if n == 2 and len(beat.eigenvectors) >= 1:
+                lines += [
+                    f'_axes{idx} = Axes(x_range=[-2, 2, 1], y_range=[-2, 2, 1], x_length=3.8, y_length=3.8, axis_config={{"color": GREY_B, "tip_length": 0.12}})',
+                    f"_axes{idx}.move_to(RIGHT_CENTER + DOWN*0.2)",
+                    f"self.play(Create(_axes{idx}))",
+                ]
+                all_parts.append(f"_axes{idx}")
+                ev_colors = ["BLUE_C", "GREEN_C", "ORANGE", "PINK"]
+                for j, evec in enumerate(beat.eigenvectors[:2]):
+                    if len(evec) < 2:
+                        continue
+                    mag = max((evec[0]**2 + evec[1]**2) ** 0.5, 1e-9)
+                    scale = min(1.5, 1.5 / (max(abs(evec[0]), abs(evec[1])) or 1))
+                    ex = round(evec[0] * scale, 4)
+                    ey = round(evec[1] * scale, 4)
+                    col = ev_colors[j]
+                    eval_val = beat.eigenvalues[j] if j < len(beat.eigenvalues) else 0.0
+                    lbl_str = _safe_str(f"{labels[j]}={eval_val:.2f}")
+                    side = "RIGHT" if ex >= 0 else "LEFT"
+                    lines += [
+                        f"_evec{idx}_{j} = Arrow(_axes{idx}.c2p(0,0), _axes{idx}.c2p({ex},{ey}),"
+                        f" color={col}, buff=0, stroke_width=3)",
+                        f"_elbl{idx}_{j} = Text(\"{lbl_str}\", font_size=16, color={col})"
+                        f".next_to(_evec{idx}_{j}.get_end(), {side}, buff=0.08)",
+                        f"self.play(Create(_evec{idx}_{j}), FadeIn(_elbl{idx}_{j}))",
+                    ]
+                    all_parts += [f"_evec{idx}_{j}", f"_elbl{idx}_{j}"]
+            else:
+                # 3×3: list eigenvalues as text
+                eval_str = _safe_str(", ".join(
+                    f"{labels[j]}={beat.eigenvalues[j]:.2f}"
+                    for j in range(min(len(labels), len(beat.eigenvalues)))
+                ))
+                lines += [
+                    f'_eval_txt{idx} = Text("Eigenvalues: {eval_str}", font_size=16, color=GREY_B)'
+                    f".move_to(CONTENT_CENTER + UP*1.5)",
+                    f"self.play(Write(_eval_txt{idx}))",
+                ]
+                all_parts.append(f"_eval_txt{idx}")
+
+            lines.append("self.wait(2.5)")
+            if title_var:
+                all_parts.insert(0, title_var)
+            lines.append(f"{v} = VGroup({', '.join(all_parts)})")
+
+        elif isinstance(beat, TreeBeat):
+            from collections import defaultdict as _dd, deque as _dq
+            n_nodes = len(beat.nodes)
+            children: dict = _dd(list)
+            for edge in beat.edges:
+                if len(edge) >= 2 and 0 <= edge[0] < n_nodes and 0 <= edge[1] < n_nodes:
+                    children[edge[0]].append(edge[1])
+
+            # BFS to assign levels
+            root = 0
+            level: dict = {root: 0}
+            level_nodes: dict = _dd(list)
+            queue = _dq([root])
+            visited: set = {root}
+            while queue:
+                node = queue.popleft()
+                level_nodes[level[node]].append(node)
+                for child in children[node]:
+                    if child not in visited:
+                        level[child] = level[node] + 1
+                        queue.append(child)
+                        visited.add(child)
+            for i in range(n_nodes):
+                if i not in level:
+                    lv = max(level.values()) + 1 if level else 0
+                    level[i] = lv
+                    level_nodes[lv].append(i)
+
+            # Compute positions (Python, hardcoded in output)
+            h_sp, v_sp = 1.5, 1.35
+            positions: dict = {}
+            for lv, lvnodes in level_nodes.items():
+                w = (len(lvnodes) - 1) * h_sp
+                for i, ni in enumerate(lvnodes):
+                    positions[ni] = (round(-w / 2 + i * h_sp, 3), round(-lv * v_sp, 3))
+
+            nc = _safe_color(beat.node_color or "BLUE", "BLUE")
+            hc = _safe_color(beat.highlight_color or "YELLOW", "YELLOW")
+
+            lines = [f"# Beat {idx+1}: tree"]
+            title_var = ""
+            if beat.title:
+                title_var = f"_trt{idx}"
+                lines += [
+                    f'{title_var} = Text("{_safe_str(beat.title)}", font_size=20)'
+                    f".move_to(CONTENT_CENTER + UP*1.85)",
+                    f"self.play(FadeIn({title_var}))",
+                ]
+            lines.append(f"_tnodes{idx} = []")
+            for i in range(n_nodes):
+                x, y = positions.get(i, (0.0, 0.0))
+                lbl = _safe_str(beat.nodes[i])
+                lines += [
+                    f"_nc{idx}_{i} = Circle(radius=0.28, color={nc}, fill_opacity=0.5, stroke_width=2)"
+                    f".move_to(CONTENT_CENTER + RIGHT*{x} + UP*{y} + DOWN*0.4)",
+                    f"_nt{idx}_{i} = Text(\"{lbl}\", font_size=15).move_to(_nc{idx}_{i}.get_center())",
+                    f"_tnodes{idx}.append(VGroup(_nc{idx}_{i}, _nt{idx}_{i}))",
+                ]
+            lines.append(f"_tedges{idx} = VGroup()")
+            for edge in beat.edges:
+                if len(edge) >= 2 and 0 <= edge[0] < n_nodes and 0 <= edge[1] < n_nodes:
+                    pi, ci = edge[0], edge[1]
+                    lines.append(
+                        f"_tedges{idx}.add(Line(_nc{idx}_{pi}.get_bottom(),"
+                        f" _nc{idx}_{ci}.get_top(), color=GREY_B, stroke_width=1.5))"
+                    )
+            lines += [
+                f"self.play(LaggedStart(*[Create(n) for n in _tnodes{idx}], lag_ratio=0.1))",
+                f"self.play(LaggedStart(*[Create(e) for e in _tedges{idx}], lag_ratio=0.08))",
+            ]
+            if beat.traversal_order:
+                valid_trav = [i for i in beat.traversal_order if 0 <= i < n_nodes]
+                for ti in valid_trav:
+                    lines += [
+                        f"self.play(Indicate(_nc{idx}_{ti}, scale_factor=1.35, color={hc}))",
+                        f"self.wait(0.4)",
+                    ]
+            lines.append("self.wait(1.5)")
+            all_parts = [f"VGroup(*_tnodes{idx})", f"_tedges{idx}"]
+            if title_var:
+                all_parts.insert(0, title_var)
+            lines.append(f"{v} = VGroup({', '.join(all_parts)})")
+
         elif isinstance(beat, WeightedConnectionsBeat):
             n_from = len(beat.from_labels)
             n_to = len(beat.to_labels)
@@ -419,11 +815,43 @@ class DSLCompiler:
 # ---------------------------------------------------------------------------
 
 def parse_spec(raw: str) -> AnimationSpec:
-    """Extract and validate AnimationSpec JSON from an LLM response string."""
-    # Try fenced JSON block first
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if not m:
-        m = re.search(r"(\{.*\})", raw, re.DOTALL)
-    if not m:
-        raise ValueError("No JSON object found in LLM response")
-    return AnimationSpec.model_validate_json(m.group(1))
+    """Extract and validate AnimationSpec JSON from an LLM response string.
+
+    Tries multiple strategies in order:
+    1. Direct parse (model returned only JSON)
+    2. Fenced ```json ... ``` block
+    3. Slice from first { to last } (object extraction)
+    4. Greedy regex fallback
+    """
+    text = raw.strip()
+
+    # 1. Direct parse
+    try:
+        return AnimationSpec.model_validate_json(text)
+    except Exception:
+        pass
+
+    # 2. Fenced JSON block
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            return AnimationSpec.model_validate_json(m.group(1))
+        except Exception:
+            pass
+
+    # 3. Slice first { to last }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        candidate = text[start:end + 1]
+        try:
+            return AnimationSpec.model_validate_json(candidate)
+        except Exception:
+            pass
+
+    # 4. Greedy regex fallback
+    m2 = re.search(r"(\{.*\})", text, re.DOTALL)
+    if m2:
+        return AnimationSpec.model_validate_json(m2.group(1))
+
+    raise ValueError("No valid AnimationSpec JSON found in LLM response")

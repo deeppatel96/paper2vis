@@ -9,6 +9,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,12 +39,37 @@ app = typer.Typer(help="paper2vis: turn academic papers into animations.", invok
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _actionable_error(exc_str: str, max_chars: int = 2000) -> str:
+    """Extract the most actionable portion of a Manim error for the fix LLM."""
+    lines = exc_str.splitlines()
+    error_lines: list[str] = []
+    in_traceback = False
+    for ln in lines:
+        stripped = ln.strip()
+        if stripped.startswith("Traceback (most recent call last"):
+            in_traceback = True
+            error_lines = [ln]
+        elif in_traceback:
+            error_lines.append(ln)
+            if re.match(r"^\s*\w+Error\b|\w+Exception\b", stripped):
+                in_traceback = False
+        elif re.match(r"^\s*\w+(Error|Exception)\b", stripped):
+            error_lines.append(ln)
+    if error_lines:
+        return "\n".join(error_lines)[:max_chars]
+    return exc_str[:max_chars]
+
+
+# ---------------------------------------------------------------------------
 # Pipeline class
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-4o",
+    "openai": os.environ.get("LLM_MODEL", "gpt-4.1"),
     "ollama": "llama3.1:8b",
 }
 
@@ -241,6 +267,7 @@ class Pipeline:
         max_attempts: int = 3,
     ) -> Path | None:
         current_code = code
+        seen_hashes: set[str] = {hashlib.md5(code.encode()).hexdigest()}
         for attempt in range(1, max_attempts + 1):
             try:
                 with Progress(
@@ -259,7 +286,14 @@ class Pipeline:
                 if attempt < max_attempts:
                     console.print("  [dim]Asking LLM to fix the code…[/]")
                     try:
-                        current_code = self.codegen.fix_code(current_code, str(exc))
+                        actionable = _actionable_error(str(exc))
+                        fixed_code = self.codegen.fix_code(current_code, actionable)
+                        new_hash = hashlib.md5(fixed_code.encode()).hexdigest()
+                        if new_hash in seen_hashes:
+                            console.print("  [yellow]⚠ LLM fix produced identical code — stopping retry[/]")
+                            break
+                        seen_hashes.add(new_hash)
+                        current_code = fixed_code
                     except Exception as fix_exc:
                         console.print(f"  [red]✗ LLM fix failed:[/] {fix_exc}")
                         break

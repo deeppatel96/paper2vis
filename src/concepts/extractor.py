@@ -5,11 +5,14 @@ LLM-based concept extraction from parsed paper sections.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+_log = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
@@ -82,7 +85,7 @@ class ConceptExtractor:
         self.provider = provider.lower()
         default_models = {
             "anthropic": "claude-sonnet-4-6",
-            "openai": "gpt-4o",
+            "openai": os.environ.get("LLM_MODEL", "gpt-4.1"),
             "ollama": "llama3.1:8b",
         }
         self.model = model or os.environ.get(
@@ -145,19 +148,28 @@ class ConceptExtractor:
     def _parse_response(self, raw: str, section_title: str, source_text: str = "") -> list[Concept]:
         json_str = _extract_json(raw)
         if not json_str:
+            _log.warning("No JSON found in concept extraction response for section '%s'", section_title)
             return []
 
         try:
             data = json.loads(json_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            _log.warning("JSON decode failed for section '%s': %s", section_title, exc)
             return []
 
         items = data if isinstance(data, list) else data.get("concepts", [])
         concepts: list[Concept] = []
+        dropped = 0
 
         for item in items:
             if not isinstance(item, dict):
+                dropped += 1
                 continue
+            name = item.get("name", "").strip()
+            if not name:
+                dropped += 1
+                continue
+
             vtype = item.get("visual_type", "diagram")
             if vtype not in VALID_VISUAL_TYPES:
                 vtype = "diagram"
@@ -168,7 +180,7 @@ class ConceptExtractor:
 
             concepts.append(
                 Concept(
-                    name=item.get("name", "Unnamed Concept"),
+                    name=name,
                     description=item.get("description", ""),
                     visual_type=vtype,
                     variables=item.get("variables", []),
@@ -177,6 +189,9 @@ class ConceptExtractor:
                     shot_list=shot_list,
                 )
             )
+
+        if dropped:
+            _log.warning("Dropped %d malformed concept item(s) for section '%s'", dropped, section_title)
 
         return concepts
 
@@ -200,10 +215,48 @@ def names_overlap(a: str, b: str, threshold: float = 0.6) -> bool:
 
 
 def _extract_json(text: str) -> str:
+    """Robustly extract a JSON object or array from an LLM response.
+
+    Tries multiple strategies in order:
+    1. Direct parse (LLM returned only JSON)
+    2. Fenced code block  ```json ... ```
+    3. Slice from first [ to last ] (array) or first { to last } (object)
+    4. Greedy regex as last resort
+    """
+    text = text.strip()
+
+    # 1. Direct parse
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Fenced code block
     md_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
     if md_match:
-        return md_match.group(1)
+        candidate = md_match.group(1)
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Slice from first bracket to last matching bracket
+    for open_ch, close_ch in [("[", "]"), ("{", "}")]:
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end > start:
+            candidate = text[start:end + 1]
+            try:
+                json.loads(candidate)
+                return candidate
+            except json.JSONDecodeError:
+                pass
+
+    # 4. Greedy regex fallback
     obj_match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
     if obj_match:
         return obj_match.group(1)
+
     return ""

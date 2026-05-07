@@ -11,9 +11,12 @@ RAG injection is supported for two_pass and direct modes.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
@@ -33,7 +36,7 @@ class ManimCodeGenerator:
         self.provider = (provider or os.environ.get("CODEGEN_PROVIDER") or os.environ.get("LLM_PROVIDER", "anthropic")).lower()
         default_models = {
             "anthropic": "claude-sonnet-4-6",
-            "openai": "gpt-4o",
+            "openai": os.environ.get("CODEGEN_MODEL") or os.environ.get("LLM_MODEL", "gpt-4.1"),
             "ollama": "llama3.1:8b",
         }
         self.model = (
@@ -50,6 +53,7 @@ class ManimCodeGenerator:
         self._visual_diff_template = self._load_prompt(PROMPTS_DIR / "manim_visual_diff.txt")
         self._dsl_template = self._load_prompt(PROMPTS_DIR / "manim_dsl.txt")
         self._direct_template = self._load_prompt(PROMPTS_DIR / "manim_direct.txt")
+        self._primitive_template = self._load_prompt(PROMPTS_DIR / "manim_primitive.txt")
 
     # ------------------------------------------------------------------
     # Primary generation entry point
@@ -67,9 +71,45 @@ class ManimCodeGenerator:
             return self.generate_dsl(concept, rag_examples=rag_examples)
         if mode == "direct":
             return self.generate_direct(concept, rag_examples=rag_examples)
+        if mode == "primitive":
+            return self.generate_primitive(concept)
         # Default: two_pass
         storyboard = self._plan(concept, figure_context)
         return self._code_from_storyboard(storyboard, rag_examples=rag_examples)
+
+    # ------------------------------------------------------------------
+    # Primitive mode
+    # ------------------------------------------------------------------
+
+    def generate_primitive(self, concept: "Concept") -> str:  # noqa: F821
+        """Generate code via the Mathlib-inspired primitive catalog.
+
+        The LLM picks from a validated beat catalog keyed to the concept's
+        mathematical family. The spec is Pydantic-validated and compiled to
+        deterministic Manim — no free-form Python emitted.
+        """
+        from src.animation.dsl import DSLCompiler, parse_spec
+        from src.concepts.mathlib_matcher import match_family, recommended_beats
+
+        family = match_family(concept)
+        recs = ", ".join(recommended_beats(family))
+        prompt = (
+            self._primitive_template
+            .replace("{{CONCEPT_NAME}}", concept.name)
+            .replace("{{CONCEPT_DESCRIPTION}}", concept.description)
+            .replace("{{VISUAL_TYPE}}", concept.visual_type)
+            .replace("{{MATHLIB_FAMILY}}", family)
+            .replace("{{RECOMMENDED_BEATS}}", recs)
+            .replace("{{VARIABLES}}", ", ".join(concept.variables) or "N/A")
+            .replace("{{RAW_TEXT}}", (concept.raw_text or "")[:3000])
+        )
+        raw = call_llm(self.provider, self.model, prompt, max_tokens=2048)
+        try:
+            spec = parse_spec(raw)
+            return DSLCompiler().compile(spec)
+        except Exception as exc:
+            _log.warning("Primitive spec failed (%s); falling back to DSL mode", exc)
+            return self.generate_dsl(concept)
 
     def get_storyboard(self, concept: "Concept", figure_context: list[str] | None = None) -> str:
         """Expose the storyboard for logging/debugging."""
@@ -261,7 +301,17 @@ class ManimCodeGenerator:
             "13. Mobject.__init__ does not accept 'alignment' kwarg — remove it.\n"
             "14. Helper functions node_row/flow_column/side_by_side/connect/heatmap/bar_chart "
             "are auto-injected — NEVER define them yourself, just call them.\n"
-            "15. side_by_side() and flow_column() use parameter name 'stage_colors', NOT 'colors'.\n\n"
+            "15. side_by_side() and flow_column() use parameter name 'stage_colors', NOT 'colors'.\n"
+            "16. Text() without font_size defaults to 48pt which is HUGE — every Text() call MUST have "
+            "font_size explicitly: title=34, body labels=24, small annotations=18, tiny mono=14. "
+            "Scan every Text() in the file and add font_size if missing.\n"
+            "17. NEVER put LaTeX/math inside Text() — Text(r'\\frac{1}{2}') shows raw backslashes. "
+            "Use MathTex(r'\\frac{1}{2}') for ALL math expressions. "
+            "Find any Text() containing backslashes or math symbols and convert to MathTex.\n"
+            "18. Static-only animation — if the ENTIRE scene uses only FadeIn/Write/Create with no "
+            "Transform/ReplacementTransform/ValueTracker/animate_bars, add at least one dynamic transformation. "
+            "Find the most important result being shown and replace its FadeIn with a ReplacementTransform "
+            "from the input object, or add a ValueTracker to animate a key numeric value changing.\n\n"
             "If you find issues, return the corrected code. "
             "If the code is already correct, return it unchanged. "
             "Return ONLY the Python code in ```python ... ``` fences.\n\n"
@@ -343,9 +393,46 @@ class ManimCodeGenerator:
         return path.read_text(encoding="utf-8")
 
     def _extract_code(self, raw: str) -> str:
-        py_match = re.search(r"```(?:python)?\s*(.*?)```", raw, re.DOTALL)
-        if py_match:
-            return py_match.group(1).strip()
-        if "from manim import" in raw or "class " in raw:
-            return raw.strip()
-        return raw.strip()
+        """Extract and validate Python code from an LLM response.
+
+        Tries multiple strategies:
+        1. All fenced ```python``` blocks — pick the longest that compiles
+        2. Bare code detection (starts with import/class)
+        3. Raw text fallback
+
+        Raises ValueError if no compilable code block is found.
+        """
+        # 1. Find all fenced code blocks and pick the longest compilable one
+        blocks = re.findall(r"```(?:python)?\s*(.*?)```", raw, re.DOTALL)
+        if blocks:
+            candidates = sorted((b.strip() for b in blocks), key=len, reverse=True)
+            for candidate in candidates:
+                try:
+                    compile(candidate, "<string>", "exec")
+                    return self._fix_code_issues(candidate)
+                except SyntaxError:
+                    continue
+            # All blocks have syntax errors — use longest and let renderer report it clearly
+            _log.warning("All fenced code blocks have syntax errors; using longest as-is")
+            return self._fix_code_issues(candidates[0])
+
+        # 2. Bare code (no fences)
+        stripped = raw.strip()
+        if "from manim import" in stripped or re.search(r"^class \w+.*Scene", stripped, re.MULTILINE):
+            try:
+                compile(stripped, "<string>", "exec")
+            except SyntaxError as exc:
+                _log.warning("Bare code block has syntax error: %s", exc)
+            return self._fix_code_issues(stripped)
+
+        # 3. Fallback — return as-is so renderer gives a meaningful error
+        _log.warning("Could not find a code block in LLM response; returning raw text")
+        return self._fix_code_issues(stripped)
+
+    def _fix_code_issues(self, code: str) -> str:
+        """Programmatic fixes that LLM validators miss consistently."""
+        # Cap any font_size above 36 to 34 (title max)
+        def _cap_font_size(m: re.Match) -> str:
+            return f"font_size={min(int(m.group(1)), 36)}"
+        code = re.sub(r"font_size=(\d+)", _cap_font_size, code)
+        return code

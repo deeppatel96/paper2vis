@@ -27,8 +27,10 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy project
 COPY . .
 
-RUN mkdir -p papers output
+RUN mkdir -p papers output data
 
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["python", "-m", "src.pipeline"]
+# Default: run the API server (used by Render/Docker deployments).
+# To run the CLI instead: docker run ... python -m src.pipeline run paper.pdf
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

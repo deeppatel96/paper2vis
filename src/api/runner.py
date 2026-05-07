@@ -12,6 +12,7 @@ same emit() / get_job() / list_events() interface.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ from typing import Any, Callable
 
 from src.api.models import JobState, JobStatus
 
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=min(8, (os.cpu_count() or 2) + 2))
 _jobs: dict[str, dict] = {}
 _events: dict[str, list[dict]] = {}
 _cancelled: set[str] = set()

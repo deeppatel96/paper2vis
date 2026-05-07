@@ -15,9 +15,9 @@ from src.animation._utils import _ffmpeg_bin, get_video_duration as _get_video_d
 
 
 class ManimNarrator:
-    def __init__(self, provider: str = "openai", model: str = "gpt-4o-mini"):
+    def __init__(self, provider: str = "openai", model: str | None = None):
         self.provider = provider
-        self.model = model
+        self.model = model or os.environ.get("LLM_MODEL", "gpt-4.1")
 
     # ------------------------------------------------------------------
 

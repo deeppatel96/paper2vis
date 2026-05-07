@@ -26,10 +26,11 @@ For each beat write:
 **Beat N — [one-line title matching the shot_list beat]**
 - *Objects*: Exact objects to create with specific numeric values labeled. Prefer node_row for value sequences, heatmap for matrices, bar_chart for distributions.
 - *Animation*: Exact animation calls. Show numbers changing — use `always_redraw` + `ValueTracker` for smoothly animating scalar values.
+- *Computation spec* (**REQUIRED**): State exactly (a) what values appear on screen as numbers, (b) what transformation animation shows the computation. Choose one: `ValueTracker` (animating a changing scalar), `ReplacementTransform(old, new)` (symbol/formula morphing), `animate_bars` (distribution changing), `interpolate_color` in a loop (weight-proportional coloring), or `Transform(src, dst)` (shape morphing). If none of these apply, rethink the beat — a beat with no transformation is a slideshow frame.
 - *Duration*: `self.wait(2.0)` — minimum 2s per beat.
 - *Insight*: One sentence — what the viewer understands after this beat.
 
-**Key rule**: Show the computation happening. Values must change on screen with `Transform`, `ReplacementTransform`, or `ValueTracker`. Never just show a static diagram.
+**Key rule**: Show the computation happening. Values must change on screen. A beat that only calls FadeIn/Write/Create without any transformation will be rejected by the critic.
 
 ## Layout helpers — USE THESE FIRST
 
@@ -75,7 +76,7 @@ MathTex(r"\lnot \text{Provable}(n)")
 - Use `eq.get_part_by_tex("symbol")` to highlight sub-expressions
 - For step-by-step formula evaluation: create multiple `MathTex` objects and `ReplacementTransform` between them
 
-Use `Text()` only for non-math labels like titles and callout annotations.
+Use `Text()` only for plain English labels — NEVER for math or LaTeX (use `MathTex`). Every `Text()` MUST have explicit `font_size` (default 48 is huge): title=34, body=24, annotations=18.
 
 ## Verified animation calls ONLY
 

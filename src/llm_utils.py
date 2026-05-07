@@ -4,14 +4,52 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 from pathlib import Path
+
+# Singleton clients — created once, reused across all calls to avoid
+# allocating a new HTTP connection pool per request.
+_anthropic_client = None
+_openai_client = None
+
+
+def _get_anthropic():
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        _anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _anthropic_client
+
+
+def _get_openai():
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+        _openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    return _openai_client
+
+
+def _with_retry(fn, max_retries: int = 5):
+    """Call fn(), retrying on 429 rate-limit errors with exponential backoff."""
+    delay = 5.0
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as exc:
+            msg = str(exc)
+            is_rate_limit = "429" in msg or "rate_limit" in msg.lower() or "rate limit" in msg.lower()
+            if is_rate_limit and attempt < max_retries - 1:
+                time.sleep(delay)
+                delay = min(delay * 2, 60.0)
+                continue
+            raise
 
 
 def call_llm(provider: str, model: str, prompt: str, max_tokens: int = 2048) -> str:
     if provider == "anthropic":
-        return _call_anthropic(prompt, model, max_tokens)
+        return _with_retry(lambda: _call_anthropic(prompt, model, max_tokens))
     elif provider == "openai":
-        return _call_openai(prompt, model, max_tokens)
+        return _with_retry(lambda: _call_openai(prompt, model, max_tokens))
     elif provider == "ollama":
         return _call_ollama(prompt, model)
     raise ValueError(f"Unknown provider: {provider!r}")
@@ -26,9 +64,9 @@ def call_llm_vision(
 ) -> str:
     """Call an LLM with both text and image inputs. Only openai and anthropic support vision."""
     if provider == "openai":
-        return _call_openai_vision(prompt, model, image_paths, max_tokens)
+        return _with_retry(lambda: _call_openai_vision(prompt, model, image_paths, max_tokens))
     elif provider == "anthropic":
-        return _call_anthropic_vision(prompt, model, image_paths, max_tokens)
+        return _with_retry(lambda: _call_anthropic_vision(prompt, model, image_paths, max_tokens))
     raise ValueError(f"Vision not supported for provider: {provider!r}. Use 'openai' or 'anthropic'.")
 
 
@@ -41,9 +79,9 @@ def call_llm_vision_bytes(
 ) -> str:
     """Like call_llm_vision but accepts raw image bytes instead of file paths."""
     if provider == "openai":
-        return _call_openai_vision_bytes(prompt, model, images, max_tokens)
+        return _with_retry(lambda: _call_openai_vision_bytes(prompt, model, images, max_tokens))
     elif provider == "anthropic":
-        return _call_anthropic_vision_bytes(prompt, model, images, max_tokens)
+        return _with_retry(lambda: _call_anthropic_vision_bytes(prompt, model, images, max_tokens))
     raise ValueError(f"Vision not supported for provider: {provider!r}. Use 'openai' or 'anthropic'.")
 
 
@@ -52,8 +90,7 @@ def call_llm_vision_bytes(
 # ---------------------------------------------------------------------------
 
 def _call_anthropic(prompt: str, model: str, max_tokens: int) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = _get_anthropic()
     message = client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -63,8 +100,7 @@ def _call_anthropic(prompt: str, model: str, max_tokens: int) -> str:
 
 
 def _call_openai(prompt: str, model: str, max_tokens: int) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = _get_openai()
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -104,8 +140,7 @@ def _encode_image(path: str | Path) -> str:
 def _call_openai_vision(
     prompt: str, model: str, image_paths: list[str | Path], max_tokens: int
 ) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = _get_openai()
 
     content: list[dict] = [{"type": "text", "text": prompt}]
     for path in image_paths:
@@ -128,8 +163,7 @@ def _call_openai_vision(
 def _call_anthropic_vision(
     prompt: str, model: str, image_paths: list[str | Path], max_tokens: int
 ) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = _get_anthropic()
 
     content: list[dict] = []
     for path in image_paths:
@@ -175,8 +209,7 @@ def _sniff_mime(data: bytes) -> str:
 def _call_openai_vision_bytes(
     prompt: str, model: str, images: list[bytes], max_tokens: int
 ) -> str:
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = _get_openai()
 
     content: list[dict] = [{"type": "text", "text": prompt}]
     for img_bytes in images:
@@ -200,8 +233,7 @@ def _call_openai_vision_bytes(
 def _call_anthropic_vision_bytes(
     prompt: str, model: str, images: list[bytes], max_tokens: int
 ) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = _get_anthropic()
 
     content: list[dict] = []
     for img_bytes in images:

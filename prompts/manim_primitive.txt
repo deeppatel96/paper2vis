@@ -13,7 +13,7 @@ Source excerpt:
 <recommended_beats>
 {{RECOMMENDED_BEATS}}
 </recommended_beats>
-
+{{LEAN_HINT}}
 ## Your task
 
 Output a single JSON object conforming to AnimationSpec. Use 2–5 beats. Each beat must use one of the validated types below.

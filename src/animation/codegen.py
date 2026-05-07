@@ -73,6 +73,10 @@ class ManimCodeGenerator:
             return self.generate_direct(concept, rag_examples=rag_examples)
         if mode == "primitive":
             return self.generate_primitive(concept)
+        if mode == "lean":
+            from src.animation.lean_proof import get_animator
+            lean_hint = get_animator().enrich(concept)
+            return self.generate_primitive(concept, lean_hint=lean_hint)
         # Default: two_pass
         storyboard = self._plan(concept, figure_context)
         return self._code_from_storyboard(storyboard, rag_examples=rag_examples)
@@ -81,18 +85,32 @@ class ManimCodeGenerator:
     # Primitive mode
     # ------------------------------------------------------------------
 
-    def generate_primitive(self, concept: "Concept") -> str:  # noqa: F821
+    def generate_primitive(
+        self,
+        concept: "Concept",  # noqa: F821
+        lean_hint: "Optional[LeanStructure]" = None,  # noqa: F821
+    ) -> str:
         """Generate code via the Mathlib-inspired primitive catalog.
 
         The LLM picks from a validated beat catalog keyed to the concept's
         mathematical family. The spec is Pydantic-validated and compiled to
         deterministic Manim — no free-form Python emitted.
+
+        If lean_hint is provided (a LeanStructure from lean_proof.enrich()),
+        its beat guidance is injected into the prompt for tighter parameterisation.
         """
         from src.animation.dsl import DSLCompiler, parse_spec
         from src.concepts.mathlib_matcher import match_family, recommended_beats
 
         family = match_family(concept)
         recs = ", ".join(recommended_beats(family))
+
+        lean_block = ""
+        if lean_hint is not None:
+            from src.animation.lean_proof import get_animator
+            hint_text = get_animator().build_prompt_hint(lean_hint)
+            lean_block = f"\n<lean_structure_hint>\n{hint_text}\n</lean_structure_hint>\n"
+
         prompt = (
             self._primitive_template
             .replace("{{CONCEPT_NAME}}", concept.name)
@@ -102,6 +120,7 @@ class ManimCodeGenerator:
             .replace("{{RECOMMENDED_BEATS}}", recs)
             .replace("{{VARIABLES}}", ", ".join(concept.variables) or "N/A")
             .replace("{{RAW_TEXT}}", (concept.raw_text or "")[:3000])
+            .replace("{{LEAN_HINT}}", lean_block)
         )
         raw = call_llm(self.provider, self.model, prompt, max_tokens=2048)
         try:

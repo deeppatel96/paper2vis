@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -50,15 +51,17 @@ class ExampleStore:
         self._examples: List[ManimExample] = []
         self._idf: dict[str, float] = {}
         self._loaded = False
+        self._lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
-        if self._loaded:
-            return
-        if self._path.exists():
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-            self._examples = [ManimExample(**item) for item in raw]
-        self._build_idf()
-        self._loaded = True
+        with self._lock:
+            if self._loaded:
+                return
+            if self._path.exists():
+                raw = json.loads(self._path.read_text(encoding="utf-8"))
+                self._examples = [ManimExample(**item) for item in raw]
+            self._build_idf()
+            self._loaded = True
 
     def _tokenize(self, text: str) -> List[str]:
         return re.findall(r"[a-z0-9]+", text.lower())
@@ -112,7 +115,9 @@ class ExampleStore:
             "These are adapted from 3Blue1Brown's actual video code. "
             "Match this visual style: mathematical precision, smooth transitions, "
             "ValueTracker-driven continuous motion, MathTex for all formulas, "
-            "clean color-coded labeling, and a title that persists throughout.\n"
+            "clean color-coded labeling, and a title that persists throughout. "
+            "NOTE: always specify font_size explicitly — title=34, body=24, annotations=18, tiny=14. "
+            "Never use Text() without font_size (defaults to 48pt which is too large).\n"
         ) if has_3b1b else (
             "These working Manim scenes are provided as reference. "
             "Study their patterns — use similar animation sequences, "

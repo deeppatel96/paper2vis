@@ -157,6 +157,14 @@ Study this example carefully:
 - `obj.animate.set_color(...)` / `.animate.scale(...)` / `.animate.shift(...)` — motion on existing objects
 - `interpolate_color(c1, c2, t)` inside a loop — visual transition proportional to data
 
+**FORBIDDEN ANTI-PATTERNS — these will score ≤ 5 and fail the critic:**
+- `self.play(FadeIn(result_box))` to show a computation result → use `ReplacementTransform(input_obj, result_obj)` instead
+- `self.play(FadeIn(bars))` for a distribution → use `animate_bars(self, bars, baseline)` so bars grow from zero
+- `self.play(Write(formula))` then nothing → follow with `TransformMatchingShapes(formula, next_formula)` showing evaluation steps
+- Displaying a matrix/heatmap with `FadeIn` only → add `Indicate(cells[i][j], ...)` to highlight the key value
+- A beat where ALL calls are FadeIn/Write/Create — at least one call must be Transform/ReplacementTransform/ValueTracker/animate_bars/interpolate_color
+- Using `Text(r"\frac{1}{2}")` for math → use `MathTex(r"\frac{1}{2}")` always
+
 **Static reveals are insufficient for the computation beat.** If Beat 2 shows a result (e.g. a transformed value, a computed output, an encoded sequence), animate HOW it is computed:
 - Numbers changing: use `ValueTracker` + `always_redraw`, or `ReplacementTransform(old_num, new_num)`
 - Symbol→number encoding: use `LaggedStart([ReplacementTransform(sym.copy(), num) for sym, num in zip(syms, nums)], lag_ratio=0.3)`
@@ -203,7 +211,8 @@ Study this example carefully:
 - `eq.get_part_by_tex("x_i")` to isolate and highlight sub-expressions
 - For animated values: `always_redraw(lambda: MathTex(f"w = {t.get_value():.2f}"))`
 - `get_x_axis_label`, `get_y_axis_label` → `Text(...).next_to(axes.get_x_axis(), RIGHT, buff=0.15)`
-- Use `Text()` only for plain English labels and annotations, never for math symbols
+- Use `Text()` only for plain English labels and annotations, NEVER for math symbols or LaTeX — use `MathTex(r"...")` for ALL math
+- Every `Text()` call MUST include `font_size` explicitly (default is 48 which is huge): title=34, body=24, annotations=18, tiny=14
 
 **Animation quality:**
 - `LaggedStart([FadeIn(x) for x in items], lag_ratio=0.2)` for staggered reveals

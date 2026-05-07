@@ -1,11 +1,25 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function InvitePage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
+        <div className="w-full max-w-sm text-center">
+          <h1 className="text-2xl font-bold">Redeeming invite…</h1>
+        </div>
+      </main>
+    }>
+      <InviteInner />
+    </Suspense>
+  );
+}
+
+function InviteInner() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();

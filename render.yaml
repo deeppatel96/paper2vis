@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: paper2vis-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard  # 2 CPU, 4GB RAM — needed for Manim + LaTeX
+    healthCheckPath: /api/health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: CODEGEN_PROVIDER
+        value: anthropic
+    disk:
+      name: paper2vis-data
+      mountPath: /app/data
+      sizeGB: 10

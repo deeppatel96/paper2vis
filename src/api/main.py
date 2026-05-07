@@ -358,6 +358,25 @@ async def get_my_usage(clerk_id: str = Depends(verify_token)):
 
 
 # ---------------------------------------------------------------------------
+# Invite codes — self-service Pro upgrade
+# ---------------------------------------------------------------------------
+
+@app.post("/api/invite")
+async def redeem_invite(
+    code: str = Body(..., embed=True),
+    clerk_id: str = Depends(verify_token),
+):
+    """Redeem an invite code to upgrade the calling user to Pro."""
+    invite_code = os.environ.get("INVITE_CODE_PRO", "")
+    if not invite_code or code != invite_code:
+        raise HTTPException(status_code=400, detail="Invalid invite code")
+    if not os.environ.get("SUPABASE_URL"):
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    _supabase().table("users").upsert({"clerk_id": clerk_id, "tier": "pro"}).execute()
+    return {"status": "ok", "tier": "pro"}
+
+
+# ---------------------------------------------------------------------------
 # Admin — manual tier management
 # ---------------------------------------------------------------------------
 

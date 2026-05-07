@@ -5,3 +5,9 @@ manim
 python-dotenv
 rich
 typer
+fastapi
+uvicorn[standard]
+python-multipart
+PyJWT[crypto]
+svix
+supabase

@@ -48,17 +48,17 @@ def _diff_trigger(report_json: str, limit: int = 130) -> str:
 
 _DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-4o",
+    "openai": os.environ.get("LLM_MODEL", "gpt-4.1"),
     "ollama": "llama3.1:8b",
 }
-_MAX_PARALLEL_WORKERS = 4
+_MAX_PARALLEL_WORKERS = 8
 
 
 def _make_tools(options: dict) -> tuple[ManimCodeGenerator, ManimRenderer, ManimCritic, ManimNarrator]:
-    provider = os.environ.get("LLM_PROVIDER", "openai")
-    model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
-    codegen_provider = os.environ.get("CODEGEN_PROVIDER", provider)
-    codegen_model = os.environ.get("CODEGEN_MODEL", _DEFAULT_MODELS.get(codegen_provider, model))
+    provider = options.get("llm_provider") or os.environ.get("LLM_PROVIDER", "openai")
+    model = options.get("llm_model") or os.environ.get("LLM_MODEL", "gpt-4.1")
+    codegen_provider = options.get("codegen_provider") or os.environ.get("CODEGEN_PROVIDER", provider)
+    codegen_model = options.get("codegen_model") or os.environ.get("CODEGEN_MODEL", _DEFAULT_MODELS.get(codegen_provider, model))
     return (
         ManimCodeGenerator(provider=codegen_provider, model=codegen_model),
         ManimRenderer(quality=options.get("quality", "medium_quality")),
@@ -178,7 +178,7 @@ def _process_concept(
     gen_mode: str = options.get("generation_mode", "two_pass")
 
     rag_block = ""
-    if gen_mode != "dsl":  # DSL prompt handles context differently
+    if gen_mode != "dsl" and options.get("use_rag", True):
         try:
             from src.animation.rag import get_store
             store_rag = get_store()
@@ -323,9 +323,14 @@ def _process_concept(
     # ── Visual diff ───────────────────────────────────────────────────────────
     if video_path and extracted_figures and video_url and fig_idx is not None:
         source_fig = extracted_figures[fig_idx]
+        cached_frame: bytes | None = None
+        cached_frame_path: object = None  # track which video the frame came from
         for vd in range(1, 3):
             try:
-                frame = critic.extract_keyframe_bytes(video_path)
+                if video_path is not cached_frame_path:
+                    cached_frame = critic.extract_keyframe_bytes(video_path)
+                    cached_frame_path = video_path
+                frame = cached_frame
                 if not frame:
                     break
                 emit({"type": "step", "index": idx,
@@ -363,6 +368,10 @@ def _process_concept(
     # ── Critic → fix → re-render loop ────────────────────────────────────────
     critique_md: str | None = None
     MAX_CRITIC_ITERS = 3
+    best_score: int = 0
+    best_code: str = current_code
+    best_video_bytes: bytes | None = None
+    prev_score: int | None = None  # score that triggered the last fix
     if video_url:
         for crit_iter in range(1, MAX_CRITIC_ITERS + 1):
             _check(job_id)
@@ -375,6 +384,24 @@ def _process_concept(
                     concept_description=concept.description,
                     storyboard=storyboard or "",
                 )
+
+                # Regression guard: if fix made things worse, revert to best and stop
+                if prev_score is not None and result.score < prev_score:
+                    emit({"type": "warning",
+                          "message": f"[{name}] Critic fix regressed {prev_score}→{result.score}/10, reverting"})
+                    if best_video_bytes is not None:
+                        store.write(video_key, best_video_bytes)
+                        store.write(f"{prefix}/scene.py", best_code.encode())
+                        video_url = store.url(video_key)
+                        current_code = best_code
+                    break
+
+                # Track best version seen so far
+                if result.score > best_score:
+                    best_score = result.score
+                    best_code = current_code
+                    best_video_bytes = store.path(video_key).read_bytes()
+
                 status = "PASS" if result.passes else "FAIL"
                 bar = "█" * result.score + "░" * (10 - result.score)
                 lines = [f"# Critic Report — {name} (pass {crit_iter})", "",
@@ -415,6 +442,7 @@ def _process_concept(
                     store.write(video_key, critic_bytes)
                     video_url = store.url(video_key)
                     video_path = new_vid
+                    prev_score = result.score  # remember score before this fix
                     current_code = fixed_code
                     store.write(f"{prefix}/scene.py", fixed_code.encode())
                     trigger = f"Critic {result.score}/10 — {result.issues[0]}" if result.issues else f"Critic {result.score}/10"
@@ -532,7 +560,7 @@ def _generate_concept_graph(
     emit({"type": "stage", "message": "Generating concept map…"})
 
     provider = os.environ.get("LLM_PROVIDER", "openai")
-    model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    model = os.environ.get("LLM_MODEL", os.environ.get("LLM_MODEL", "gpt-4.1"))
 
     prompt_template = _GRAPH_PROMPT_PATH.read_text(encoding="utf-8")
     concept_list = [
@@ -634,12 +662,12 @@ def run_pipeline(
 ) -> None:
     emit = lambda ev: runner.emit(job_id, ev)
 
-    provider = os.environ.get("LLM_PROVIDER", "openai")
-    model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    provider = options.get("llm_provider") or os.environ.get("LLM_PROVIDER", "openai")
+    model = options.get("llm_model") or os.environ.get("LLM_MODEL", "gpt-4.1")
     max_concepts: int = options.get("max_concepts", 4)
     figure_context: bool = options.get("figure_context", False)
     skip_render: bool = options.get("skip_render", False)
-    parallel_concepts: int = min(int(options.get("parallel_concepts", 1)), _MAX_PARALLEL_WORKERS)
+    parallel_concepts: int = min(int(options.get("parallel_concepts", 4)), _MAX_PARALLEL_WORKERS)
 
     pdf_path = store.path(pdf_key)
 

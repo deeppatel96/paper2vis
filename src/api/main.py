@@ -9,21 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 load_dotenv()
 
 from src.api import runner
+from src.api.auth import verify_token
 from src.api.models import JobState
 from src.api.pipeline_adapter import run_pipeline, regenerate_concept
 from src.api.storage import LocalStorage
+from src.api.webhooks import handle_clerk_webhook
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 store = LocalStorage(DATA_DIR)
@@ -31,12 +34,102 @@ runner.init(DATA_DIR)
 
 app = FastAPI(title="paper2vis API")
 
+# ---------------------------------------------------------------------------
+# CORS — allow localhost for dev and the deployed Vercel frontend
+# ---------------------------------------------------------------------------
+
+_cors_origins = ["http://localhost:3000"]
+_vercel_url = os.environ.get("FRONTEND_URL", "")
+if _vercel_url:
+    _cors_origins.append(_vercel_url.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Tier configuration
+# ---------------------------------------------------------------------------
+
+TIER_CONFIGS: dict[str, dict] = {
+    "mini": {
+        "llm_provider": "anthropic",
+        "llm_model": "claude-haiku-4-5-20251001",
+        "codegen_provider": "anthropic",
+        "codegen_model": "claude-sonnet-4-6",
+        "max_concepts_limit": 3,
+        "quality_limit": "low_quality",
+        "jobs_per_month": 5,
+    },
+    "pro": {
+        "llm_provider": "anthropic",
+        "llm_model": "claude-sonnet-4-6",
+        "codegen_provider": "anthropic",
+        "codegen_model": "claude-opus-4-6",
+        "max_concepts_limit": 16,
+        "quality_limit": "high_quality",
+        "jobs_per_month": 50,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Supabase helpers (gracefully no-op when not configured)
+# ---------------------------------------------------------------------------
+
+def _supabase():
+    from supabase import create_client
+    return create_client(
+        os.environ["SUPABASE_URL"],
+        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+    )
+
+
+def _get_user_tier(clerk_id: str) -> str:
+    """Return the user's tier from Supabase. Defaults to 'mini' on any failure."""
+    if clerk_id == "dev" or not os.environ.get("SUPABASE_URL"):
+        return os.environ.get("DEV_TIER", "pro")
+    try:
+        sb = _supabase()
+        row = sb.table("users").select("tier").eq("clerk_id", clerk_id).maybe_single().execute()
+        if row and row.data:
+            return row.data.get("tier", "mini")
+        # Auto-create user row on first API call (fallback if webhook missed)
+        sb.table("users").upsert({"clerk_id": clerk_id, "email": "", "tier": "mini"}).execute()
+        return "mini"
+    except Exception:
+        return "mini"
+
+
+def _get_monthly_usage(clerk_id: str) -> int:
+    """Count jobs created by this user in the current calendar month."""
+    if clerk_id == "dev" or not os.environ.get("SUPABASE_URL"):
+        return 0
+    try:
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        sb = _supabase()
+        result = (
+            sb.table("usage")
+            .select("id", count="exact")
+            .eq("clerk_id", clerk_id)
+            .gte("created_at", month_start)
+            .execute()
+        )
+        return result.count or 0
+    except Exception:
+        return 0
+
+
+def _record_usage(clerk_id: str, job_id: str) -> None:
+    if clerk_id == "dev" or not os.environ.get("SUPABASE_URL"):
+        return
+    try:
+        _supabase().table("usage").insert({"clerk_id": clerk_id, "job_id": job_id}).execute()
+    except Exception:
+        pass  # Non-fatal — job still runs
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +148,28 @@ async def create_job(
     voice: bool = Form(True),
     generation_mode: str = Form("two_pass"),
     concept_selection: bool = Form(False),
+    use_rag: bool = Form(True),
+    clerk_id: str = Depends(verify_token),
 ):
+    tier = _get_user_tier(clerk_id)
+    cfg = TIER_CONFIGS.get(tier, TIER_CONFIGS["mini"])
+
+    # Enforce monthly job limit
+    used = _get_monthly_usage(clerk_id)
+    limit = cfg["jobs_per_month"]
+    if used >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly limit reached ({used}/{limit} jobs). Upgrade to Pro for more.",
+        )
+
+    # Cap options to tier maximums
+    max_concepts = min(max_concepts, cfg["max_concepts_limit"])
+    quality_order = ["low_quality", "medium_quality", "high_quality"]
+    tier_quality_idx = quality_order.index(cfg["quality_limit"])
+    req_quality_idx = quality_order.index(quality) if quality in quality_order else 0
+    quality = quality_order[min(req_quality_idx, tier_quality_idx)]
+
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     job_id = f"{ts}_{uuid.uuid4().hex[:8]}"
     pdf_key = f"{job_id}/upload/{pdf.filename}"
@@ -64,7 +178,7 @@ async def create_job(
     valid_modes = {"two_pass", "dsl", "direct", "all"}
     gen_mode = generation_mode if generation_mode in valid_modes else "two_pass"
 
-    tags: list[str] = [gen_mode]
+    tags: list[str] = [gen_mode, tier]
     if figure_context:
         tags.append("figures")
     if voice:
@@ -83,20 +197,27 @@ async def create_job(
         "voice": voice,
         "generation_mode": gen_mode,
         "concept_selection": concept_selection,
+        "use_rag": use_rag,
         "tags": tags,
+        # Tier-specific model config — overrides env vars in pipeline
+        "llm_provider": cfg["llm_provider"],
+        "llm_model": cfg["llm_model"],
+        "codegen_provider": cfg["codegen_provider"],
+        "codegen_model": cfg["codegen_model"],
     }
     state = runner.create_job(job_id, pdf.filename or "paper.pdf", options)
+    _record_usage(clerk_id, job_id)
     runner.submit_job(job_id, run_pipeline, pdf_key=pdf_key, options=options, store=store)
     return state
 
 
 @app.get("/api/jobs", response_model=list[JobState])
-async def list_jobs():
+async def list_jobs(clerk_id: str = Depends(verify_token)):
     return runner.list_jobs()
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobState)
-async def get_job(job_id: str):
+async def get_job(job_id: str, clerk_id: str = Depends(verify_token)):
     state = runner.get_job(job_id)
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -119,7 +240,6 @@ async def stream_job(job_id: str):
 
             job = runner.get_job(job_id)
             if job and job.status in ("done", "failed", "cancelled"):
-                # Flush any remaining events then close
                 events = runner.list_events(job_id, after=cursor)
                 for event in events:
                     yield f"data: {json.dumps(event)}\n\n"
@@ -157,8 +277,12 @@ async def serve_file(path: str):
     )
 
 
+# ---------------------------------------------------------------------------
+# Job control
+# ---------------------------------------------------------------------------
+
 @app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str):
+async def cancel_job(job_id: str, clerk_id: str = Depends(verify_token)):
     state = runner.get_job(job_id)
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -168,7 +292,11 @@ async def cancel_job(job_id: str):
 
 
 @app.post("/api/jobs/{job_id}/select-concepts")
-async def select_concepts(job_id: str, selected_indices: list[int] = Body(..., embed=True)):
+async def select_concepts(
+    job_id: str,
+    selected_indices: list[int] = Body(..., embed=True),
+    clerk_id: str = Depends(verify_token),
+):
     state = runner.get_job(job_id)
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -184,6 +312,7 @@ async def regenerate_concept_endpoint(
     job_id: str,
     concept_index: int,
     figure_index: int = Body(..., embed=True),
+    clerk_id: str = Depends(verify_token),
 ):
     state = runner.get_job(job_id)
     if not state:
@@ -193,7 +322,6 @@ async def regenerate_concept_endpoint(
     if figure_index < 0 or figure_index >= len(state.figures):
         raise HTTPException(status_code=400, detail="Figure index out of range")
 
-    # Set job back to running so SSE stream re-opens for progress events
     runner.update_job(job_id, status="running")
     runner.update_concept(job_id, concept_index, {"regen_status": "running"})
     runner.submit_job(
@@ -204,6 +332,69 @@ async def regenerate_concept_endpoint(
     )
     return {"status": "started", "concept_index": concept_index, "figure_index": figure_index}
 
+
+# ---------------------------------------------------------------------------
+# Usage / profile
+# ---------------------------------------------------------------------------
+
+@app.get("/api/me/usage")
+async def get_my_usage(clerk_id: str = Depends(verify_token)):
+    tier = _get_user_tier(clerk_id)
+    cfg = TIER_CONFIGS.get(tier, TIER_CONFIGS["mini"])
+    used = _get_monthly_usage(clerk_id)
+    now = datetime.now(timezone.utc)
+    # Reset date = 1st of next month
+    if now.month == 12:
+        reset = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        reset = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "clerk_id": clerk_id,
+        "tier": tier,
+        "jobs_used": used,
+        "jobs_limit": cfg["jobs_per_month"],
+        "reset_date": reset.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Admin — manual tier management
+# ---------------------------------------------------------------------------
+
+@app.post("/api/admin/users/{clerk_id}/tier")
+async def set_user_tier(
+    clerk_id: str,
+    tier: str = Body(..., embed=True),
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if tier not in ("mini", "pro"):
+        raise HTTPException(status_code=400, detail="tier must be 'mini' or 'pro'")
+    if not os.environ.get("SUPABASE_URL"):
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    _supabase().table("users").upsert({"clerk_id": clerk_id, "tier": tier}).execute()
+    return {"clerk_id": clerk_id, "tier": tier}
+
+
+# ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+@app.post("/api/webhooks/clerk")
+async def clerk_webhook(
+    request: Request,
+    svix_id: str = Header(default="", alias="svix-id"),
+    svix_timestamp: str = Header(default="", alias="svix-timestamp"),
+    svix_signature: str = Header(default="", alias="svix-signature"),
+):
+    return await handle_clerk_webhook(request, svix_id, svix_timestamp, svix_signature)
+
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
 
 @app.get("/api/health")
 async def health():

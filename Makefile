@@ -13,5 +13,5 @@ web: ## Start Next.js only
 	export NVM_DIR="$$HOME/.nvm" && . "$$NVM_DIR/nvm.sh" && cd web && npm run dev
 
 install: ## Install all dependencies
-	~/miniforge3/bin/pip install -r requirements.txt fastapi uvicorn python-multipart
+	~/miniforge3/bin/pip install -r requirements.txt
 	export NVM_DIR="$$HOME/.nvm" && . "$$NVM_DIR/nvm.sh" && cd web && npm install

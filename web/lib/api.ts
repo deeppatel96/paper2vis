@@ -1,5 +1,22 @@
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function authHeader(token?: string | null): HeadersInit {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export interface UsageInfo {
+  tier: "mini" | "pro";
+  jobs_used: number;
+  jobs_limit: number;
+  reset_date: string;
+}
+
+export async function getUsage(token?: string | null): Promise<UsageInfo> {
+  const res = await fetch(`${API}/api/me/usage`, { headers: authHeader(token) });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface FigureInfo {
@@ -67,7 +84,8 @@ export interface ProgressEvent {
 
 export async function submitJob(
   file: File,
-  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationMode: string; conceptSelection: boolean }
+  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationMode: string; conceptSelection: boolean; useRag: boolean },
+  token?: string | null,
 ): Promise<JobState> {
   const form = new FormData();
   form.append("pdf", file);
@@ -79,20 +97,21 @@ export async function submitJob(
   form.append("voice", String(opts.voice));
   form.append("generation_mode", opts.generationMode);
   form.append("concept_selection", String(opts.conceptSelection));
+  form.append("use_rag", String(opts.useRag));
 
-  const res = await fetch(`${API}/api/jobs`, { method: "POST", body: form });
+  const res = await fetch(`${API}/api/jobs`, { method: "POST", body: form, headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-export async function listJobs(): Promise<JobState[]> {
-  const res = await fetch(`${API}/api/jobs`);
+export async function listJobs(token?: string | null): Promise<JobState[]> {
+  const res = await fetch(`${API}/api/jobs`, { headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-export async function getJob(jobId: string): Promise<JobState> {
-  const res = await fetch(`${API}/api/jobs/${jobId}`);
+export async function getJob(jobId: string, token?: string | null): Promise<JobState> {
+  const res = await fetch(`${API}/api/jobs/${jobId}`, { headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -118,30 +137,31 @@ export function streamJob(
 export async function regenerateConcept(
   jobId: string,
   conceptIndex: number,
-  figureIndex: number
+  figureIndex: number,
+  token?: string | null,
 ): Promise<void> {
   const res = await fetch(
     `${API}/api/jobs/${jobId}/concepts/${conceptIndex}/regenerate`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader(token) },
       body: JSON.stringify({ figure_index: figureIndex }),
     }
   );
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function selectConcepts(jobId: string, selectedIndices: number[]): Promise<void> {
+export async function selectConcepts(jobId: string, selectedIndices: number[], token?: string | null): Promise<void> {
   const res = await fetch(`${API}/api/jobs/${jobId}/select-concepts`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeader(token) },
     body: JSON.stringify({ selected_indices: selectedIndices }),
   });
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function cancelJob(jobId: string): Promise<void> {
-  const res = await fetch(`${API}/api/jobs/${jobId}/cancel`, { method: "POST" });
+export async function cancelJob(jobId: string, token?: string | null): Promise<void> {
+  const res = await fetch(`${API}/api/jobs/${jobId}/cancel`, { method: "POST", headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
 }
 

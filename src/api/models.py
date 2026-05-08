@@ -63,6 +63,7 @@ class JobState(BaseModel):
     graph_video_url: Optional[str] = None
     concept_edges: list[dict] = []
     awaiting_selection: bool = False
+    novelty: Optional[dict] = None
     error: Optional[str] = None
     created_at: str
     completed_at: Optional[str] = None

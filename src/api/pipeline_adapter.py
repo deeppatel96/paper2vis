@@ -586,8 +586,8 @@ def _save_concept(
 _NOVELTY_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "novelty_detection.txt"
 
 
-def _detect_novelty(paper_text: str, provider: str, model: str) -> str:
-    """Run novelty detection on paper text. Returns a formatted context block or empty string."""
+def _detect_novelty(paper_text: str, provider: str, model: str) -> tuple[str, dict]:
+    """Run novelty detection. Returns (context_block, parsed_data)."""
     import json as _json
     import re as _re
     from src.llm_utils import call_llm
@@ -605,7 +605,7 @@ def _detect_novelty(paper_text: str, provider: str, model: str) -> str:
             json_str = fb.group(0) if fb else None
 
         if not json_str:
-            return ""
+            return "", {}
 
         data = _json.loads(json_str)
         contribution = data.get("contribution", "")
@@ -614,7 +614,7 @@ def _detect_novelty(paper_text: str, provider: str, model: str) -> str:
         keywords = data.get("focus_keywords", [])
 
         if not contribution:
-            return ""
+            return "", {}
 
         lines = [
             "## PRIORITY: This Paper's Novel Contribution",
@@ -635,9 +635,14 @@ def _detect_novelty(paper_text: str, provider: str, model: str) -> str:
             "---",
             "",
         ]
-        return "\n".join(lines)
+        return "\n".join(lines), {
+            "contribution": contribution,
+            "key_mechanism": mechanism,
+            "prior_limitation": limitation,
+            "focus_keywords": keywords,
+        }
     except Exception:
-        return ""
+        return "", {}
 
 
 # ---------------------------------------------------------------------------
@@ -801,8 +806,11 @@ def run_pipeline(
         paper_text = "\n\n".join(
             f"{s.title}\n{s.text}" for s in paper.sections[:4]
         )
-        novelty_context = _detect_novelty(paper_text, provider, model)
+        novelty_context, novelty_data = _detect_novelty(paper_text, provider, model)
         if novelty_context:
+            runner.update_job(job_id, novelty=novelty_data)
+            emit({"type": "novelty", "novelty": novelty_data,
+                  "message": f"Novel contribution: {novelty_data.get('contribution', '')}"})
             emit({"type": "stage", "message": "Novel contribution identified — steering extraction"})
 
     if user_hint:

@@ -67,6 +67,7 @@ export interface JobState {
   graph_video_url: string | null;
   concept_edges: Array<{ from: number; to: number; label: string }> | null;
   awaiting_selection: boolean;
+  novelty: { contribution: string; key_mechanism: string; prior_limitation: string; focus_keywords: string[] } | null;
   error: string | null;
   created_at: string;
   completed_at: string | null;

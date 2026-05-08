@@ -116,6 +116,27 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <PipelineStageTracker job={job} />
         )}
 
+        {/* ── Novel contribution banner ───────────────────────────────── */}
+        {job.novelty && (
+          <div className="rounded-xl border border-blue-800/50 bg-blue-950/20 px-4 py-3 space-y-1.5">
+            <p className="text-xs font-bold uppercase tracking-widest text-blue-400">Novel contribution detected</p>
+            <p className="text-sm text-white">{job.novelty.contribution}</p>
+            {job.novelty.key_mechanism && (
+              <p className="text-xs text-gray-400"><span className="text-gray-500">Mechanism:</span> {job.novelty.key_mechanism}</p>
+            )}
+            {job.novelty.prior_limitation && (
+              <p className="text-xs text-gray-400"><span className="text-gray-500">Addresses:</span> {job.novelty.prior_limitation}</p>
+            )}
+            {job.novelty.focus_keywords?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {job.novelty.focus_keywords.map((kw) => (
+                  <span key={kw} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/50 border border-blue-700/50 text-blue-300 font-mono">{kw}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Concept map (shown once concepts are known) ─────────────── */}
         {stubs.length > 0 && (
           <InteractiveConceptMap

@@ -60,8 +60,8 @@ function OptionPicker({ value, onChange, options }: {
 }
 
 const TIER_LIMITS = {
-  mini: { maxConcepts: 3, qualityLimit: "low_quality" },
-  pro:  { maxConcepts: 16, qualityLimit: "high_quality" },
+  mini: { maxConcepts: 3, qualityLimit: "low_quality", maxRetries: 5 },
+  pro:  { maxConcepts: 16, qualityLimit: "high_quality", maxRetries: 10 },
 };
 
 export default function UploadPage() {
@@ -86,6 +86,7 @@ export default function UploadPage() {
       setUsage(u);
       const limits = TIER_LIMITS[u.tier] ?? TIER_LIMITS.mini;
       setMaxConcepts(Math.min(maxConcepts, limits.maxConcepts));
+      setMaxRetries(r => Math.min(r, limits.maxRetries));
       if (u.tier === "mini") setQuality("low_quality");
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -182,7 +183,7 @@ export default function UploadPage() {
 
             <div className="flex items-center gap-4">
               <label className="text-sm text-gray-300 w-36 shrink-0">Render retries</label>
-              <input type="range" min={1} max={10} value={maxRetries}
+              <input type="range" min={1} max={tierLimits.maxRetries} value={maxRetries}
                 onChange={(e) => setMaxRetries(Number(e.target.value))}
                 className="flex-1 accent-blue-500" />
               <span className="text-sm text-white w-4 text-right">{maxRetries}</span>

@@ -157,7 +157,7 @@ export default function UploadPage() {
               <input type="range" min={1} max={tierLimits.maxConcepts} value={maxConcepts}
                 onChange={(e) => { const v = Number(e.target.value); setMaxConcepts(v); setParallelConcepts(p => Math.min(p, v)); }}
                 className="flex-1 accent-blue-500" />
-              <span className="text-sm text-white w-6 text-right">{maxConcepts}</span>
+              <span className="text-sm text-white w-4 text-right">{maxConcepts}</span>
             </div>
 
             <div className="flex items-center gap-4">

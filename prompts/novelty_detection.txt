@@ -1,0 +1,20 @@
+You are analyzing an academic paper to identify its core novel contribution.
+
+Read the following paper text (typically abstract + introduction) and identify what is genuinely new about this work.
+
+Return valid JSON only in ```json ... ``` fences.
+
+```json
+{
+  "contribution": "One sentence: what this paper does that no prior work did",
+  "key_mechanism": "The core technical mechanism, algorithm, or method that achieves the contribution — this is the primary thing to animate",
+  "prior_limitation": "What problem or limitation prior work had that this paper addresses",
+  "focus_keywords": ["keyword1", "keyword2"]
+}
+```
+
+`focus_keywords` should be 3–6 terms from the paper's own vocabulary that name the novel mechanism (e.g. ["sparse attention", "temperature scaling", "routing network"]). These will be used to steer concept extraction.
+
+<paper_text>
+{{PAPER_TEXT}}
+</paper_text>

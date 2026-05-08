@@ -144,6 +144,8 @@ async def create_job(
     generation_mode: str = Form("two_pass"),
     concept_selection: bool = Form(False),
     use_rag: bool = Form(True),
+    novelty_focus: bool = Form(False),
+    user_hint: str = Form(""),
     clerk_id: str = Depends(verify_token),
 ):
     tier = _get_user_tier(clerk_id)
@@ -193,6 +195,8 @@ async def create_job(
         "generation_mode": gen_mode,
         "concept_selection": concept_selection,
         "use_rag": use_rag,
+        "novelty_focus": novelty_focus,
+        "user_hint": user_hint,
         "tags": tags,
         # Tier-specific model config — overrides env vars in pipeline
         "llm_provider": cfg["llm_provider"],

@@ -77,6 +77,8 @@ export default function UploadPage() {
   const [generationMode, setGenerationMode] = useState("two_pass");
   const [conceptSelection, setConceptSelection] = useState(false);
   const [useRag, setUseRag] = useState(false);
+  const [noveltyFocus, setNoveltyFocus] = useState(false);
+  const [userHint, setUserHint] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
@@ -102,7 +104,7 @@ export default function UploadPage() {
     setError(null);
     try {
       const token = await getToken();
-      const job = await submitJob(file, { maxConcepts, quality, figureContext, parallelConcepts, maxRetries, voice, generationMode, conceptSelection, useRag }, token);
+      const job = await submitJob(file, { maxConcepts, quality, figureContext, parallelConcepts, maxRetries, voice, generationMode, conceptSelection, useRag, noveltyFocus, userHint }, token);
       router.push(`/jobs/${job.job_id}`);
     } catch (err) {
       setError(String(err));
@@ -253,6 +255,30 @@ export default function UploadPage() {
               <span className="text-xs text-gray-500">
                 {useRag ? "Inject 3b1b-style reference examples" : "No style examples (plain codegen)"}
               </span>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0">Novel focus</label>
+              <button type="button" onClick={() => setNoveltyFocus(!noveltyFocus)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                  ${noveltyFocus ? "bg-blue-500" : "bg-gray-600"}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                  ${noveltyFocus ? "translate-x-6" : "translate-x-1"}`} />
+              </button>
+              <span className="text-xs text-gray-500">
+                {noveltyFocus ? "Auto-detect + animate the paper's contribution" : "Animate all extracted concepts equally"}
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm text-gray-300">Extraction hint <span className="text-gray-500 font-normal">(optional)</span></label>
+              <textarea
+                value={userHint}
+                onChange={(e) => setUserHint(e.target.value)}
+                placeholder="e.g. 'Focus on the sparse routing mechanism in Section 3' or 'This paper is about diffusion models, animate the denoising step'"
+                rows={3}
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+              />
             </div>
           </div>
 

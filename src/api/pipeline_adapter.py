@@ -580,6 +580,67 @@ def _save_concept(
 
 
 # ---------------------------------------------------------------------------
+# Novelty detection
+# ---------------------------------------------------------------------------
+
+_NOVELTY_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "novelty_detection.txt"
+
+
+def _detect_novelty(paper_text: str, provider: str, model: str) -> str:
+    """Run novelty detection on paper text. Returns a formatted context block or empty string."""
+    import json as _json
+    import re as _re
+    from src.llm_utils import call_llm
+
+    try:
+        template = _NOVELTY_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt = template.replace("{{PAPER_TEXT}}", paper_text[:6000])
+        raw = call_llm(provider, model, prompt, max_tokens=512)
+
+        m = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, _re.DOTALL)
+        if m:
+            json_str = m.group(1)
+        else:
+            fb = _re.search(r"\{.*\}", raw, _re.DOTALL)
+            json_str = fb.group(0) if fb else None
+
+        if not json_str:
+            return ""
+
+        data = _json.loads(json_str)
+        contribution = data.get("contribution", "")
+        mechanism = data.get("key_mechanism", "")
+        limitation = data.get("prior_limitation", "")
+        keywords = data.get("focus_keywords", [])
+
+        if not contribution:
+            return ""
+
+        lines = [
+            "## PRIORITY: This Paper's Novel Contribution",
+            "",
+            f"**What's new:** {contribution}",
+        ]
+        if mechanism:
+            lines.append(f"**Core mechanism to animate:** {mechanism}")
+        if limitation:
+            lines.append(f"**Prior limitation addressed:** {limitation}")
+        if keywords:
+            lines.append(f"**Key terms:** {', '.join(keywords)}")
+        lines += [
+            "",
+            "**CRITICAL: Only extract concepts that directly demonstrate this novel contribution and mechanism.**",
+            "Skip background material, standard notation, or techniques borrowed unchanged from prior work.",
+            "",
+            "---",
+            "",
+        ]
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Knowledge graph generation
 # ---------------------------------------------------------------------------
 
@@ -731,6 +792,28 @@ def run_pipeline(
             runner.append_figure(job_id, {"index": i, "url": fig_url, "page": fig.page})
             emit({"type": "figure", "index": i, "url": fig_url, "page": fig.page})
 
+    # ── Novelty / user-hint context ───────────────────────────────────────────
+    novelty_context = ""
+    user_hint: str = options.get("user_hint", "").strip()
+
+    if options.get("novelty_focus", False):
+        emit({"type": "stage", "message": "Detecting novel contribution…"})
+        paper_text = "\n\n".join(
+            f"{s.title}\n{s.text}" for s in paper.sections[:4]
+        )
+        novelty_context = _detect_novelty(paper_text, provider, model)
+        if novelty_context:
+            emit({"type": "stage", "message": "Novel contribution identified — steering extraction"})
+
+    if user_hint:
+        hint_block = (
+            "## User Guidance\n\n"
+            f"{user_hint}\n\n"
+            "Use this guidance to prioritize which concepts to extract and how to frame them.\n\n"
+            "---\n\n"
+        )
+        novelty_context = hint_block + novelty_context
+
     emit({"type": "stage", "message": "Extracting concepts…"})
     extractor = ConceptExtractor(provider=provider, model=model)
     all_concepts: list[Concept] = []
@@ -738,7 +821,7 @@ def run_pipeline(
 
     for section in paper.sections:
         try:
-            for c in extractor.extract(section.to_dict()):
+            for c in extractor.extract(section.to_dict(), novelty_context=novelty_context):
                 key = normalize_concept_name(c.name)
                 if not any(names_overlap(key, e) for e in seen):
                     seen.append(key)

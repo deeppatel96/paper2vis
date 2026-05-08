@@ -1,4 +1,4 @@
-You are extracting micro-concepts from an academic paper section for short, focused mathematical animations.
+{{NOVELTY_CONTEXT}}You are extracting micro-concepts from an academic paper section for short, focused mathematical animations.
 
 Each concept must be a **single atomic operation** — one equation computing a result, one transformation applied, one logical step proven. A viewer should understand it in 20–60 seconds without reading the paper.
 

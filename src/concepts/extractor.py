@@ -96,19 +96,20 @@ class ConceptExtractor:
 
     # ------------------------------------------------------------------
 
-    def extract(self, section: dict[str, Any]) -> list[Concept]:
+    def extract(self, section: dict[str, Any], novelty_context: str = "") -> list[Concept]:
         section_text = self._format_section(section)
         if not section_text.strip():
             return []
 
-        prompt = self._prompt_template.replace("{{SECTION_TEXT}}", section_text)
+        prompt = self._prompt_template.replace("{{NOVELTY_CONTEXT}}", novelty_context)
+        prompt = prompt.replace("{{SECTION_TEXT}}", section_text)
         prompt = prompt.replace("{{MAX_CONCEPTS}}", str(self.max_concepts_per_section))
 
         raw = call_llm(self.provider, self.model, prompt, max_tokens=4096)
         source_text = section.get("text", "")[:_RAW_TEXT_LIMIT]
         return self._parse_response(raw, section_title=section.get("title", ""), source_text=source_text)
 
-    def extract_all(self, sections: list[dict[str, Any]]) -> list[Concept]:
+    def extract_all(self, sections: list[dict[str, Any]], novelty_context: str = "") -> list[Concept]:
         """Extract concepts from all sections, deduplicating by name."""
         seen_keys: list[str] = []
         all_concepts: list[Concept] = []
@@ -118,7 +119,7 @@ class ConceptExtractor:
             if re.search(r"^(References?|Bibliography|Acknowledgements?)$", title, re.I):
                 continue
 
-            for concept in self.extract(section):
+            for concept in self.extract(section, novelty_context=novelty_context):
                 key = normalize_concept_name(concept.name)
                 if not any(names_overlap(key, existing) for existing in seen_keys):
                     seen_keys.append(key)

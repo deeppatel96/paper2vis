@@ -46,10 +46,12 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Tier configuration
+# Tier configuration (mutable — overridable via /api/admin/config)
 # ---------------------------------------------------------------------------
 
-TIER_CONFIGS: dict[str, dict] = {
+_CONFIG_PATH = DATA_DIR / "tier_config.json"
+
+_TIER_DEFAULTS: dict[str, dict] = {
     "mini": {
         "llm_provider": "anthropic",
         "llm_model": "claude-haiku-4-5-20251001",
@@ -69,6 +71,25 @@ TIER_CONFIGS: dict[str, dict] = {
         "jobs_per_month": 50,
     },
 }
+
+def _load_tier_configs() -> dict[str, dict]:
+    if _CONFIG_PATH.exists():
+        try:
+            saved = json.loads(_CONFIG_PATH.read_text())
+            merged = {tier: {**_TIER_DEFAULTS[tier], **saved.get(tier, {})} for tier in _TIER_DEFAULTS}
+            return merged
+        except Exception:
+            pass
+    return {tier: dict(cfg) for tier, cfg in _TIER_DEFAULTS.items()}
+
+def _save_tier_configs(configs: dict[str, dict]) -> None:
+    try:
+        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CONFIG_PATH.write_text(json.dumps(configs, indent=2))
+    except Exception:
+        pass
+
+TIER_CONFIGS: dict[str, dict] = _load_tier_configs()
 
 # ---------------------------------------------------------------------------
 # Supabase helpers (gracefully no-op when not configured)
@@ -415,6 +436,40 @@ async def list_invite_codes(
         raise HTTPException(status_code=503, detail="Supabase not configured")
     rows = _supabase().table("invite_codes").select("*").order("created_at", desc=True).execute()
     return rows.data
+
+@app.get("/api/admin/config")
+async def get_config(
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return TIER_CONFIGS
+
+
+@app.post("/api/admin/config")
+async def save_config(
+    config: dict = Body(...),
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    valid_tiers = {"mini", "pro"}
+    valid_keys = {"llm_provider", "llm_model", "codegen_provider", "codegen_model",
+                  "max_concepts_limit", "quality_limit", "jobs_per_month"}
+    for tier, values in config.items():
+        if tier not in valid_tiers:
+            raise HTTPException(status_code=400, detail=f"Unknown tier: {tier}")
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid config for tier: {tier}")
+        unknown = set(values.keys()) - valid_keys
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown config keys: {unknown}")
+        TIER_CONFIGS[tier].update(values)
+    _save_tier_configs(TIER_CONFIGS)
+    return TIER_CONFIGS
+
 
 @app.post("/api/admin/users/{clerk_id}/tier")
 async def set_user_tier(

@@ -162,6 +162,37 @@ export async function selectConcepts(jobId: string, selectedIndices: number[], t
   if (!res.ok) throw new Error(await res.text());
 }
 
+export interface TierConfig {
+  llm_provider: string;
+  llm_model: string;
+  codegen_provider: string;
+  codegen_model: string;
+  max_concepts_limit: number;
+  quality_limit: string;
+  jobs_per_month: number;
+}
+
+export async function getAdminConfig(adminSecret: string): Promise<Record<string, TierConfig>> {
+  const res = await fetch(`${API}/api/admin/config`, {
+    headers: { "x-admin-secret": adminSecret },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function saveAdminConfig(
+  config: Record<string, Partial<TierConfig>>,
+  adminSecret: string,
+): Promise<Record<string, TierConfig>> {
+  const res = await fetch(`${API}/api/admin/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-secret": adminSecret },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function cancelJob(jobId: string, token?: string | null): Promise<void> {
   const res = await fetch(`${API}/api/jobs/${jobId}/cancel`, { method: "POST", headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());

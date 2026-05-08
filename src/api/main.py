@@ -426,11 +426,12 @@ async def redeem_invite(
     if row.data.get("used_by"):
         raise HTTPException(status_code=400, detail="Invite code already used")
     from datetime import datetime, timezone
+    # Upsert user first — invite_codes.used_by has a FK to users.clerk_id
+    sb.table("users").upsert({"clerk_id": clerk_id, "email": "", "tier": "pro"}).execute()
     sb.table("invite_codes").update({
         "used_by": clerk_id,
         "used_at": datetime.now(timezone.utc).isoformat(),
     }).eq("code", code).execute()
-    sb.table("users").upsert({"clerk_id": clerk_id, "tier": "pro"}).execute()
     return {"status": "ok", "tier": "pro"}
 
 

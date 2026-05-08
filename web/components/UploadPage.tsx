@@ -103,14 +103,31 @@ export default function UploadPage() {
     getToken().then((token) => getUsage(token)).then((u) => {
       setUsage(u);
       const limits = TIER_LIMITS[u.tier] ?? TIER_LIMITS.mini;
-      setMaxConcepts(Math.min(maxConcepts, limits.maxConcepts));
-      setMaxRetries(r => Math.min(r, limits.maxRetries));
-      if (u.tier === "mini") {
+      if (u.tier === "pro") {
+        setMaxConcepts(8);
+        setQuality("high_quality");
+        setParallelConcepts(3);
+        setMaxRetries(limits.maxRetries);
+        setUseRag(true);
+        setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
+        setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
+      } else {
+        setMaxConcepts(Math.min(maxConcepts, limits.maxConcepts));
+        setMaxRetries(r => Math.min(r, limits.maxRetries));
         setQuality("low_quality");
         setLlmModel(m => EXTRACTION_MODELS.find(o => !o.proOnly)?.value ?? m);
         setCodegenModel(m => CODEGEN_MODELS.find(o => !o.proOnly)?.value ?? m);
       }
-    }).catch(() => {});
+    }).catch(() => {
+      // Local dev — no auth configured, default to pro limits
+      setMaxConcepts(8);
+      setQuality("high_quality");
+      setParallelConcepts(3);
+      setMaxRetries(TIER_LIMITS.pro.maxRetries);
+      setUseRag(true);
+      setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
+      setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

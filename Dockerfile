@@ -30,7 +30,8 @@ COPY . .
 RUN mkdir -p papers output data
 
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
 # Default: run the API server (used by Render/Docker deployments).
 # To run the CLI instead: docker run ... python -m src.pipeline run paper.pdf
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT}"]

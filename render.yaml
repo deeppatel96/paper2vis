@@ -3,7 +3,7 @@ services:
     name: paper2vis-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: standard  # 2 CPU, 4GB RAM — needed for Manim + LaTeX
+    plan: starter  # 512MB RAM — $7/month. Upgrade to standard ($25) if LaTeX OOMs during render.
     healthCheckPath: /api/health
     envVars:
       - key: ANTHROPIC_API_KEY
@@ -26,7 +26,5 @@ services:
         value: anthropic
       - key: CODEGEN_PROVIDER
         value: anthropic
-    disk:
-      name: paper2vis-data
-      mountPath: /app/data
-      sizeGB: 10
+    # disk removed — job data stored in /tmp (lost on restart, acceptable for demo)
+    # To persist jobs: re-add disk: { name: paper2vis-data, mountPath: /app/data, sizeGB: 10 }

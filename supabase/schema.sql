@@ -19,4 +19,4 @@ CREATE TABLE IF NOT EXISTS usage (
 
 -- Index for fast monthly usage queries
 CREATE INDEX IF NOT EXISTS usage_clerk_month
-  ON usage (clerk_id, date_trunc('month', created_at));
+  ON usage (clerk_id, date_trunc('month', created_at AT TIME ZONE 'UTC'));

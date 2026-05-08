@@ -33,8 +33,8 @@ export default function FileUpload({ onFile }: Props) {
 
   if (previewUrl) {
     return (
-      <div className="relative w-full h-72 rounded-xl overflow-hidden border border-gray-600 bg-gray-900 group">
-        <iframe src={previewUrl} className="w-full h-full border-0" />
+      <div className="relative w-full h-52 rounded-xl overflow-hidden border border-gray-600 bg-gray-900 group">
+        <embed src={previewUrl} type="application/pdf" className="w-full h-full" />
         <button
           type="button"
           onClick={() => inputRef.current?.click()}

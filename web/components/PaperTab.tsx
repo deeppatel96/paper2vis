@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { JobState, FigureInfo, ConceptResult, fileUrl, regenerateConcept } from "@/lib/api";
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export default function PaperTab({ job, onRegenerated }: Props) {
+  const { getToken } = useAuth();
   const [selectedFigure, setSelectedFigure] = useState<number | null>(null);
   const [assignTarget, setAssignTarget] = useState<number | null>(null); // concept index
   const [regenPending, setRegenPending] = useState<number | null>(null); // concept index
@@ -24,7 +26,7 @@ export default function PaperTab({ job, onRegenerated }: Props) {
     setRegenPending(assignTarget);
     setError(null);
     try {
-      await regenerateConcept(job.job_id, assignTarget, selectedFigure);
+      await regenerateConcept(job.job_id, assignTarget, selectedFigure, await getToken());
       setSelectedFigure(null);
       setAssignTarget(null);
       onRegenerated();

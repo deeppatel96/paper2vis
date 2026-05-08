@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { listJobs, JobState } from "@/lib/api";
 
 const STATUS_DOT: Record<string, string> = {
@@ -14,13 +15,17 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { getToken } = useAuth();
   const [jobs, setJobs] = useState<JobState[]>([]);
 
   useEffect(() => {
-    listJobs().then(setJobs).catch(() => {});
-    const id = setInterval(() => listJobs().then(setJobs).catch(() => {}), 5000);
+    const load = async () => {
+      try { setJobs(await listJobs(await getToken())); } catch {}
+    };
+    load();
+    const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [getToken]);
 
   return (
     <aside className="w-56 shrink-0 bg-gray-950 border-r border-gray-800 flex flex-col h-screen sticky top-0 overflow-hidden">

@@ -101,7 +101,7 @@ class ConceptExtractor:
         if not section_text.strip():
             return []
 
-        prompt = self._prompt_template.replace("{{NOVELTY_CONTEXT}}", novelty_context)
+        prompt = self._prompt_template.replace("{{NOVELTY_CONTEXT}}", novelty_context.rstrip())
         prompt = prompt.replace("{{SECTION_TEXT}}", section_text)
         prompt = prompt.replace("{{MAX_CONCEPTS}}", str(self.max_concepts_per_section))
 

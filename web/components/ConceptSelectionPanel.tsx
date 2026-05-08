@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { ConceptStub, selectConcepts } from "@/lib/api";
 
 const TYPE_COLOR: Record<string, string> = {
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function ConceptSelectionPanel({ jobId, stubs }: Props) {
+  const { getToken } = useAuth();
   const [selected, setSelected] = useState<Set<number>>(
     new Set(stubs.map((s) => s.index))
   );
@@ -46,7 +48,7 @@ export default function ConceptSelectionPanel({ jobId, stubs }: Props) {
       const indices = stubs
         .filter((s) => selected.has(s.index))
         .map((s) => s.index);
-      await selectConcepts(jobId, indices);
+      await selectConcepts(jobId, indices, await getToken());
     } catch (err) {
       setError(String(err));
       setSubmitting(false);

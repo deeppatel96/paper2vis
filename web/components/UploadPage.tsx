@@ -1,9 +1,63 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, UserButton } from "@clerk/nextjs";
 import FileUpload from "@/components/FileUpload";
 import { submitJob, getUsage, UsageInfo } from "@/lib/api";
+
+type PickerOption = { value: string; label: string; description: string; disabled?: boolean };
+
+function OptionPicker({ value, onChange, options }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: PickerOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find(o => o.value === value) ?? options[0];
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative flex-1">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+      >
+        <span>{selected.label}</span>
+        <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full min-w-[260px] bg-gray-800 border border-gray-600 rounded-lg shadow-xl overflow-hidden">
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={opt.disabled}
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={`w-full text-left px-3 py-2.5 transition-colors
+                ${opt.disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}
+                ${opt.value === value ? "bg-blue-600/30 text-blue-300" : "hover:bg-gray-700 text-white"}`}
+            >
+              <div className="text-sm font-medium">{opt.label}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{opt.description}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const TIER_LIMITS = {
   mini: { maxConcepts: 3, qualityLimit: "low_quality" },
@@ -106,13 +160,16 @@ export default function UploadPage() {
             </div>
 
             <div className="flex items-center gap-4">
-              <label className="text-sm text-gray-300 w-36 shrink-0">Quality</label>
-              <select value={quality} onChange={(e) => setQuality(e.target.value)}
-                className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="low_quality">Low (fast)</option>
-                {tierLimits.qualityLimit !== "low_quality" && <option value="medium_quality">Medium</option>}
-                {tierLimits.qualityLimit === "high_quality" && <option value="high_quality">High (slow)</option>}
-              </select>
+              <label className="text-sm text-gray-300 w-36 shrink-0">Video quality</label>
+              <OptionPicker
+                value={quality}
+                onChange={setQuality}
+                options={[
+                  { value: "low_quality",    label: "Low (480p)",    description: "Fastest renders — great for exploring a new paper before committing to a full run." },
+                  { value: "medium_quality", label: "Medium (720p)", description: "Best balance of speed and clarity. Recommended for most papers.", disabled: tierLimits.qualityLimit === "low_quality" },
+                  { value: "high_quality",   label: "High (1080p)",  description: "Sharpest output — ideal for presentations or sharing. Takes 2–3× longer to render.", disabled: tierLimits.qualityLimit !== "high_quality" },
+                ]}
+              />
             </div>
 
             <div className="flex items-center gap-4">
@@ -133,13 +190,16 @@ export default function UploadPage() {
 
             <div className="flex items-center gap-4">
               <label className="text-sm text-gray-300 w-36 shrink-0">Generation mode</label>
-              <select value={generationMode} onChange={(e) => setGenerationMode(e.target.value)}
-                className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="two_pass">Two-pass (storyboard → code)</option>
-                <option value="dsl">Typed DSL (reliable)</option>
-                <option value="direct">Direct (fastest)</option>
-                <option value="all">Compare all three</option>
-              </select>
+              <OptionPicker
+                value={generationMode}
+                onChange={setGenerationMode}
+                options={[
+                  { value: "two_pass", label: "Two-pass",    description: "Plans a visual storyboard first, then writes animation code from it. Best quality — recommended for most papers." },
+                  { value: "dsl",      label: "Typed DSL",   description: "Generates a structured spec that's validated before rendering. Fewer crashes, more predictable output." },
+                  { value: "direct",   label: "Direct",      description: "Writes animation code in a single pass with no planning step. Fastest but most variable quality." },
+                  { value: "all",      label: "Compare all", description: "Runs all three modes in parallel and keeps the best result. Slowest but highest chance of a great animation." },
+                ]}
+              />
             </div>
 
             <div className="flex items-center gap-4">

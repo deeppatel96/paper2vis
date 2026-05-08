@@ -85,7 +85,7 @@ export interface ProgressEvent {
 
 export async function submitJob(
   file: File,
-  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationMode: string; conceptSelection: boolean; useRag: boolean; noveltyFocus: boolean; userHint: string },
+  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationMode: string; conceptSelection: boolean; useRag: boolean; noveltyFocus: boolean; userHint: string; llmModel: string; codegenModel: string },
   token?: string | null,
 ): Promise<JobState> {
   const form = new FormData();
@@ -101,6 +101,8 @@ export async function submitJob(
   form.append("use_rag", String(opts.useRag));
   form.append("novelty_focus", String(opts.noveltyFocus));
   form.append("user_hint", opts.userHint);
+  form.append("llm_model_override", opts.llmModel);
+  form.append("codegen_model_override", opts.codegenModel);
 
   const res = await fetch(`${API}/api/jobs`, { method: "POST", body: form, headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());

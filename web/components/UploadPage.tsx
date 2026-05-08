@@ -65,6 +65,20 @@ const TIER_LIMITS = {
   pro:  { maxConcepts: 16, qualityLimit: "high_quality", maxRetries: 10 },
 };
 
+const EXTRACTION_MODELS = [
+  { value: "gpt-4o-mini",             provider: "openai",     label: "GPT-4o mini",    description: "Fast and cheap — good for most papers.",                          proOnly: false },
+  { value: "gpt-4o",                  provider: "openai",     label: "GPT-4o",         description: "Stronger extraction, better at complex or dense papers.",          proOnly: true  },
+  { value: "claude-haiku-4-5-20251001", provider: "anthropic", label: "Claude Haiku",  description: "Fast Anthropic model, comparable cost to GPT-4o mini.",            proOnly: false },
+  { value: "claude-sonnet-4-6",       provider: "anthropic",  label: "Claude Sonnet",  description: "High-quality Anthropic extraction for nuanced papers.",            proOnly: true  },
+];
+
+const CODEGEN_MODELS = [
+  { value: "gpt-4o",            provider: "openai",     label: "GPT-4o",       description: "Solid animation quality, good balance of speed and creativity.",  proOnly: false },
+  { value: "gpt-4.1",           provider: "openai",     label: "GPT-4.1",      description: "Best OpenAI model for code — most reliable complex animations.",  proOnly: true  },
+  { value: "claude-sonnet-4-6", provider: "anthropic",  label: "Claude Sonnet", description: "Strong Anthropic codegen, excellent at structured output.",      proOnly: false },
+  { value: "claude-opus-4-6",   provider: "anthropic",  label: "Claude Opus",  description: "Most capable Anthropic model — highest quality animations.",      proOnly: true  },
+];
+
 export default function UploadPage() {
   const router = useRouter();
   const { getToken } = useAuth();
@@ -80,6 +94,8 @@ export default function UploadPage() {
   const [useRag, setUseRag] = useState(false);
   const [noveltyFocus, setNoveltyFocus] = useState(false);
   const [userHint, setUserHint] = useState("");
+  const [llmModel, setLlmModel] = useState(EXTRACTION_MODELS[0].value);
+  const [codegenModel, setCodegenModel] = useState(CODEGEN_MODELS[0].value);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
@@ -91,7 +107,11 @@ export default function UploadPage() {
       const limits = TIER_LIMITS[u.tier] ?? TIER_LIMITS.mini;
       setMaxConcepts(Math.min(maxConcepts, limits.maxConcepts));
       setMaxRetries(r => Math.min(r, limits.maxRetries));
-      if (u.tier === "mini") setQuality("low_quality");
+      if (u.tier === "mini") {
+        setQuality("low_quality");
+        setLlmModel(m => EXTRACTION_MODELS.find(o => !o.proOnly)?.value ?? m);
+        setCodegenModel(m => CODEGEN_MODELS.find(o => !o.proOnly)?.value ?? m);
+      }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -106,7 +126,7 @@ export default function UploadPage() {
     setError(null);
     try {
       const token = await getToken();
-      const job = await submitJob(file, { maxConcepts, quality, figureContext, parallelConcepts, maxRetries, voice, generationMode, conceptSelection, useRag, noveltyFocus, userHint }, token);
+      const job = await submitJob(file, { maxConcepts, quality, figureContext, parallelConcepts, maxRetries, voice, generationMode, conceptSelection, useRag, noveltyFocus, userHint, llmModel, codegenModel }, token);
       router.push(`/jobs/${job.job_id}`);
     } catch (err) {
       setError(String(err));
@@ -179,6 +199,34 @@ export default function UploadPage() {
                   { value: "medium_quality", label: "Medium (720p)", description: "Best balance of speed and clarity. Recommended for most papers.", disabled: tierLimits.qualityLimit === "low_quality" },
                   { value: "high_quality",   label: "High (1080p)",  description: "Sharpest output — ideal for presentations or sharing. Takes 2–3× longer to render.", disabled: tierLimits.qualityLimit !== "high_quality" },
                 ]}
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0">Extraction model</label>
+              <OptionPicker
+                value={llmModel}
+                onChange={setLlmModel}
+                options={EXTRACTION_MODELS.map(m => ({
+                  value: m.value,
+                  label: m.label,
+                  description: m.description,
+                  disabled: m.proOnly && usage?.tier !== "pro",
+                }))}
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0">Codegen model</label>
+              <OptionPicker
+                value={codegenModel}
+                onChange={setCodegenModel}
+                options={CODEGEN_MODELS.map(m => ({
+                  value: m.value,
+                  label: m.label,
+                  description: m.description,
+                  disabled: m.proOnly && usage?.tier !== "pro",
+                }))}
               />
             </div>
 

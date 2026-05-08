@@ -72,6 +72,16 @@ _TIER_DEFAULTS: dict[str, dict] = {
     },
 }
 
+def _infer_provider(model: str, default: str) -> str:
+    if not model:
+        return default
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    return default
+
+
 def _load_tier_configs() -> dict[str, dict]:
     if _CONFIG_PATH.exists():
         try:
@@ -167,6 +177,8 @@ async def create_job(
     use_rag: bool = Form(True),
     novelty_focus: bool = Form(False),
     user_hint: str = Form(""),
+    llm_model_override: str = Form(""),
+    codegen_model_override: str = Form(""),
     clerk_id: str = Depends(verify_token),
 ):
     tier = _get_user_tier(clerk_id)
@@ -219,11 +231,11 @@ async def create_job(
         "novelty_focus": novelty_focus,
         "user_hint": user_hint,
         "tags": tags,
-        # Tier-specific model config — overrides env vars in pipeline
-        "llm_provider": cfg["llm_provider"],
-        "llm_model": cfg["llm_model"],
-        "codegen_provider": cfg["codegen_provider"],
-        "codegen_model": cfg["codegen_model"],
+        # Tier-specific model config — user override takes precedence over tier defaults
+        "llm_provider": _infer_provider(llm_model_override, cfg["llm_provider"]),
+        "llm_model": llm_model_override or cfg["llm_model"],
+        "codegen_provider": _infer_provider(codegen_model_override, cfg["codegen_provider"]),
+        "codegen_model": codegen_model_override or cfg["codegen_model"],
     }
     state = runner.create_job(job_id, pdf.filename or "paper.pdf", options)
     _record_usage(clerk_id, job_id)

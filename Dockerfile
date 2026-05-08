@@ -2,6 +2,8 @@ FROM python:3.12
 
 # System deps for Manim: LaTeX, cairo, pango, ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
     ffmpeg \
     libcairo2-dev \
     libpango1.0-dev \

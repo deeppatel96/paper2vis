@@ -1,5 +1,6 @@
 "use client";
 import { use, useEffect, useState, useCallback } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { getJob, streamJob, cancelJob, JobState } from "@/lib/api";
 import ConceptCard, { ConceptSkeleton } from "@/components/ConceptCard";
 import { DashboardStats, PipelineStageTracker, ActivityFeed } from "@/components/Dashboard";
@@ -9,13 +10,20 @@ import ConceptSelectionPanel from "@/components/ConceptSelectionPanel";
 
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { getToken } = useAuth();
   const [job, setJob] = useState<JobState | null>(null);
   const [showPaper, setShowPaper] = useState(false);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
-  const refresh = useCallback(() => {
-    getJob(id).then(setJob).catch(console.error);
-  }, [id]);
+  const refresh = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const j = await getJob(id, token);
+      setJob(j);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [id, getToken]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -31,8 +39,12 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   }, []);
 
   const handleCancel = useCallback(async () => {
-    try { await cancelJob(id); refresh(); } catch (err) { console.error(err); }
-  }, [id, refresh]);
+    try {
+      const token = await getToken();
+      await cancelJob(id, token);
+      refresh();
+    } catch (err) { console.error(err); }
+  }, [id, getToken, refresh]);
 
   if (!job) {
     return (

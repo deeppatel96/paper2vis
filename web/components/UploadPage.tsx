@@ -139,17 +139,6 @@ export default function UploadPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <FileUpload onFile={setFile} />
 
-          {file && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 text-sm">
-              <svg className="w-4 h-4 text-red-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
-              </svg>
-              <span className="text-gray-200 truncate">{file.name}</span>
-              <span className="text-gray-500 shrink-0 text-xs ml-auto">
-                {(file.size / 1024).toFixed(0)} KB
-              </span>
-            </div>
-          )}
 
           <div className="space-y-3 rounded-xl bg-gray-900 border border-gray-700 p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Options</p>

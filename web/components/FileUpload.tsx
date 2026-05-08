@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Props {
   onFile: (f: File) => void;
@@ -7,16 +7,48 @@ interface Props {
 
 export default function FileUpload({ onFile }: Props) {
   const [dragging, setDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const accept = useCallback(
+    (file: File) => {
+      if (file.type !== "application/pdf") return;
+      setPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+      onFile(file);
+    },
+    [onFile]
+  );
+
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragging(false);
       const file = e.dataTransfer.files[0];
-      if (file?.type === "application/pdf") onFile(file);
+      if (file) accept(file);
     },
-    [onFile]
+    [accept]
   );
+
+  if (previewUrl) {
+    return (
+      <div className="relative w-full h-52 rounded-xl overflow-hidden border border-gray-600 bg-gray-900 group">
+        <embed src={previewUrl} type="application/pdf" className="w-full h-full" />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="absolute inset-0 flex items-end justify-center pb-3 bg-black/0 group-hover:bg-black/40 transition-colors"
+        >
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs bg-gray-900 border border-gray-600 text-gray-200 px-3 py-1.5 rounded-lg font-medium">
+            Change PDF
+          </span>
+        </button>
+        <input ref={inputRef} type="file" accept=".pdf" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) accept(f); }} />
+      </div>
+    );
+  }
 
   return (
     <label
@@ -33,7 +65,7 @@ export default function FileUpload({ onFile }: Props) {
       <p className="text-sm text-gray-300">Drop a PDF here or <span className="text-blue-400 underline">browse</span></p>
       <p className="text-xs text-gray-500 mt-1">Academic papers work best</p>
       <input type="file" accept=".pdf" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) accept(f); }} />
     </label>
   );
 }

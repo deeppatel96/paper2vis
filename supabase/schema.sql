@@ -20,3 +20,12 @@ CREATE TABLE IF NOT EXISTS usage (
 -- Index for fast monthly usage queries
 CREATE INDEX IF NOT EXISTS usage_clerk_month
   ON usage (clerk_id, date_trunc('month', created_at AT TIME ZONE 'UTC'));
+
+-- Invite codes (unique per person, single-use)
+CREATE TABLE IF NOT EXISTS invite_codes (
+  code        TEXT PRIMARY KEY,
+  note        TEXT,                                      -- optional label, e.g. recipient name
+  used_by     TEXT REFERENCES users(clerk_id),
+  used_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -366,19 +366,56 @@ async def redeem_invite(
     code: str = Body(..., embed=True),
     clerk_id: str = Depends(verify_token),
 ):
-    """Redeem an invite code to upgrade the calling user to Pro."""
-    invite_code = os.environ.get("INVITE_CODE_PRO", "")
-    if not invite_code or code != invite_code:
-        raise HTTPException(status_code=400, detail="Invalid invite code")
+    """Redeem a single-use invite code to upgrade the calling user to Pro."""
     if not os.environ.get("SUPABASE_URL"):
         raise HTTPException(status_code=503, detail="Supabase not configured")
-    _supabase().table("users").upsert({"clerk_id": clerk_id, "tier": "pro"}).execute()
+    sb = _supabase()
+    row = sb.table("invite_codes").select("*").eq("code", code).maybe_single().execute()
+    if not row.data:
+        raise HTTPException(status_code=400, detail="Invalid invite code")
+    if row.data.get("used_by"):
+        raise HTTPException(status_code=400, detail="Invite code already used")
+    from datetime import datetime, timezone
+    sb.table("invite_codes").update({
+        "used_by": clerk_id,
+        "used_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("code", code).execute()
+    sb.table("users").upsert({"clerk_id": clerk_id, "tier": "pro"}).execute()
     return {"status": "ok", "tier": "pro"}
 
 
 # ---------------------------------------------------------------------------
-# Admin — manual tier management
+# Admin — manual tier management + invite code generation
 # ---------------------------------------------------------------------------
+
+@app.post("/api/admin/invite-codes")
+async def create_invite_code(
+    note: str = Body(default="", embed=True),
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    """Generate a single-use Pro invite code. Optionally label it with a recipient name."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not os.environ.get("SUPABASE_URL"):
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    code = uuid.uuid4().hex[:12]
+    _supabase().table("invite_codes").insert({"code": code, "note": note}).execute()
+    return {"code": code, "note": note}
+
+
+@app.get("/api/admin/invite-codes")
+async def list_invite_codes(
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    """List all invite codes and their redemption status."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not os.environ.get("SUPABASE_URL"):
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    rows = _supabase().table("invite_codes").select("*").order("created_at", desc=True).execute()
+    return rows.data
 
 @app.post("/api/admin/users/{clerk_id}/tier")
 async def set_user_tier(

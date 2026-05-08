@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { getAdminConfig, saveAdminConfig, TierConfig } from "@/lib/api";
 
 const PROVIDERS = ["anthropic", "openai", "ollama"];
@@ -101,29 +102,19 @@ interface Props {
 }
 
 export default function SettingsPanel({ onClose }: Props) {
-  const [secret, setSecret] = useState(() =>
-    typeof window !== "undefined" ? sessionStorage.getItem("admin_secret") ?? "" : ""
-  );
+  const { getToken } = useAuth();
   const [configs, setConfigs] = useState<Record<string, TierConfig> | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  async function load() {
-    if (!secret) return;
+  useEffect(() => {
     setLoading(true);
-    setError(null);
-    try {
-      const data = await getAdminConfig(secret);
-      setConfigs(data);
-      sessionStorage.setItem("admin_secret", secret);
-    } catch {
-      setError("Wrong secret or server unreachable.");
-    } finally {
-      setLoading(false);
-    }
-  }
+    getToken().then(token => getAdminConfig(token)).then(setConfigs).catch(() => {
+      setError("Failed to load config.");
+    }).finally(() => setLoading(false));
+  }, [getToken]);
 
   async function handleSave() {
     if (!configs) return;
@@ -131,7 +122,8 @@ export default function SettingsPanel({ onClose }: Props) {
     setError(null);
     setSaved(false);
     try {
-      const updated = await saveAdminConfig(configs, secret);
+      const token = await getToken();
+      const updated = await saveAdminConfig(configs, token);
       setConfigs(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -141,9 +133,6 @@ export default function SettingsPanel({ onClose }: Props) {
       setSaving(false);
     }
   }
-
-  // Auto-load if secret is already in session
-  useEffect(() => { if (secret) load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -163,42 +152,16 @@ export default function SettingsPanel({ onClose }: Props) {
         </div>
 
         <div className="flex-1 px-5 py-4 space-y-5">
-          {/* Auth */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Admin secret</label>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && load()}
-                placeholder="Enter admin secret…"
-                className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <button
-                onClick={load}
-                disabled={!secret || loading}
-                className="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-sm text-white transition-colors"
-              >
-                {loading ? "…" : "Load"}
-              </button>
-            </div>
-            {error && <p className="text-xs text-red-400">{error}</p>}
-          </div>
-
-          {configs && (
-            <>
-              <div className="border-t border-gray-800" />
-              {(["mini", "pro"] as const).map((tier) => (
-                <TierForm
-                  key={tier}
-                  tier={tier}
-                  config={configs[tier]}
-                  onChange={(updated) => setConfigs((prev) => prev ? { ...prev, [tier]: updated } : prev)}
-                />
-              ))}
-            </>
-          )}
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          {loading && <p className="text-xs text-gray-500">Loading…</p>}
+          {configs && (["mini", "pro"] as const).map((tier) => (
+            <TierForm
+              key={tier}
+              tier={tier}
+              config={configs[tier]}
+              onChange={(updated) => setConfigs((prev) => prev ? { ...prev, [tier]: updated } : prev)}
+            />
+          ))}
         </div>
 
         {/* Footer */}

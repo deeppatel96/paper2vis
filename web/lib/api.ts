@@ -175,21 +175,19 @@ export interface TierConfig {
   jobs_per_month: number;
 }
 
-export async function getAdminConfig(adminSecret: string): Promise<Record<string, TierConfig>> {
-  const res = await fetch(`${API}/api/admin/config`, {
-    headers: { "x-admin-secret": adminSecret },
-  });
+export async function getAdminConfig(token?: string | null): Promise<Record<string, TierConfig>> {
+  const res = await fetch(`${API}/api/admin/config`, { headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function saveAdminConfig(
   config: Record<string, Partial<TierConfig>>,
-  adminSecret: string,
+  token?: string | null,
 ): Promise<Record<string, TierConfig>> {
   const res = await fetch(`${API}/api/admin/config`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-admin-secret": adminSecret },
+    headers: { "Content-Type": "application/json", ...authHeader(token) },
     body: JSON.stringify(config),
   });
   if (!res.ok) throw new Error(await res.text());

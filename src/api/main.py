@@ -450,23 +450,15 @@ async def list_invite_codes(
     return rows.data
 
 @app.get("/api/admin/config")
-async def get_config(
-    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
-):
-    admin_secret = os.environ.get("ADMIN_SECRET", "")
-    if not admin_secret or x_admin_secret != admin_secret:
-        raise HTTPException(status_code=403, detail="Forbidden")
+async def get_config(clerk_id: str = Depends(verify_token)):
     return TIER_CONFIGS
 
 
 @app.post("/api/admin/config")
 async def save_config(
     config: dict = Body(...),
-    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+    clerk_id: str = Depends(verify_token),
 ):
-    admin_secret = os.environ.get("ADMIN_SECRET", "")
-    if not admin_secret or x_admin_secret != admin_secret:
-        raise HTTPException(status_code=403, detail="Forbidden")
     valid_tiers = {"mini", "pro"}
     valid_keys = {"llm_provider", "llm_model", "codegen_provider", "codegen_model",
                   "max_concepts_limit", "quality_limit", "jobs_per_month"}

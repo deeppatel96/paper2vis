@@ -154,7 +154,7 @@ export default function UploadPage() {
             <div className="flex items-center gap-4">
               <label className="text-sm text-gray-300 w-36 shrink-0">Concepts</label>
               <input type="range" min={1} max={tierLimits.maxConcepts} value={maxConcepts}
-                onChange={(e) => setMaxConcepts(Number(e.target.value))}
+                onChange={(e) => { const v = Number(e.target.value); setMaxConcepts(v); setParallelConcepts(p => Math.min(p, v)); }}
                 className="flex-1 accent-blue-500" />
               <span className="text-sm text-white w-6 text-right">{maxConcepts}</span>
             </div>
@@ -174,7 +174,7 @@ export default function UploadPage() {
 
             <div className="flex items-center gap-4">
               <label className="text-sm text-gray-300 w-36 shrink-0">Parallel concepts</label>
-              <input type="range" min={1} max={8} value={parallelConcepts}
+              <input type="range" min={1} max={maxConcepts} value={parallelConcepts}
                 onChange={(e) => setParallelConcepts(Number(e.target.value))}
                 className="flex-1 accent-blue-500" />
               <span className="text-sm text-white w-4 text-right">{parallelConcepts}</span>

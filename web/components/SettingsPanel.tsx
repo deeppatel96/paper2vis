@@ -111,8 +111,8 @@ export default function SettingsPanel({ onClose }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    getToken().then(token => getAdminConfig(token)).then(setConfigs).catch(() => {
-      setError("Failed to load config.");
+    getToken().then(token => getAdminConfig(token)).then(setConfigs).catch((e) => {
+      setError(`Failed to load config: ${String(e)}`);
     }).finally(() => setLoading(false));
   }, [getToken]);
 

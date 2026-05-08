@@ -100,7 +100,7 @@ function HistoryTimeline({ history, currentVideoUrl, subtitleUrl }: {
   );
 }
 
-export function ConceptSkeleton({ name, visual_type }: { name: string; visual_type: string }) {
+export function ConceptSkeleton({ name, visual_type, hasFigures = false }: { name: string; visual_type: string; hasFigures?: boolean }) {
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-700 overflow-hidden opacity-80">
       <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between gap-2">
@@ -114,11 +114,13 @@ export function ConceptSkeleton({ name, visual_type }: { name: string; visual_ty
           <span className="text-xs text-gray-400 capitalize">{visual_type.replace("_", " ")}</span>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-0 divide-x divide-gray-700">
-        <div className="p-3 flex flex-col gap-2">
-          <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Paper Figure</p>
-          <div className="rounded bg-gray-800 h-40 animate-pulse" />
-        </div>
+      <div className={`grid gap-0 divide-x divide-gray-700 ${hasFigures ? "grid-cols-2" : "grid-cols-1"}`}>
+        {hasFigures && (
+          <div className="p-3 flex flex-col gap-2">
+            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Paper Figure</p>
+            <div className="rounded bg-gray-800 h-40 animate-pulse" />
+          </div>
+        )}
         <div className="p-3 flex flex-col gap-2">
           <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Animation</p>
           <div className="rounded bg-gray-800 flex items-center justify-center h-40">

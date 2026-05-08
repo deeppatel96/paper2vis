@@ -115,17 +115,20 @@ def _supabase():
 
 def _get_user_tier(clerk_id: str) -> str:
     """Return the user's tier from Supabase. Defaults to 'mini' on any failure."""
+    import logging as _logging
     if clerk_id == "dev" or not os.environ.get("SUPABASE_URL"):
         return os.environ.get("DEV_TIER", "pro")
     try:
         sb = _supabase()
         row = sb.table("users").select("tier").eq("clerk_id", clerk_id).maybe_single().execute()
+        _logging.info(f"[tier] clerk_id={clerk_id} row={row.data}")
         if row and row.data:
             return row.data.get("tier", "mini")
         # Auto-create user row on first API call (fallback if webhook missed)
         sb.table("users").upsert({"clerk_id": clerk_id, "email": "", "tier": "mini"}).execute()
         return "mini"
-    except Exception:
+    except Exception as e:
+        _logging.error(f"[tier] clerk_id={clerk_id} error={e}")
         return "mini"
 
 
@@ -193,8 +196,11 @@ async def create_job(
             detail=f"Monthly limit reached ({used}/{limit} jobs). Upgrade to Pro for more.",
         )
 
-    # Cap options to tier maximums
-    max_concepts = min(max_concepts, cfg["max_concepts_limit"])
+    # Cap options to tier maximums; novelty focus uses the full tier limit
+    if novelty_focus:
+        max_concepts = cfg["max_concepts_limit"]
+    else:
+        max_concepts = min(max_concepts, cfg["max_concepts_limit"])
     quality_order = ["low_quality", "medium_quality", "high_quality"]
     tier_quality_idx = quality_order.index(cfg["quality_limit"])
     req_quality_idx = quality_order.index(quality) if quality in quality_order else 0
@@ -216,6 +222,18 @@ async def create_job(
     if parallel_concepts > 1:
         tags.append(f"{parallel_concepts}×parallel")
     tags.append(quality.replace("_quality", ""))
+    if novelty_focus:
+        tags.append("novelty")
+    if use_rag:
+        tags.append("rag")
+    if concept_selection:
+        tags.append("concept-pick")
+    llm_tag = llm_model_override or cfg["llm_model"]
+    codegen_tag = codegen_model_override or cfg["codegen_model"]
+    if llm_tag:
+        tags.append(f"ext:{llm_tag}")
+    if codegen_tag:
+        tags.append(f"gen:{codegen_tag}")
 
     options = {
         "max_concepts": max_concepts,

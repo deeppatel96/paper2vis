@@ -81,6 +81,9 @@ export interface ProgressEvent {
   url?: string;
   page?: number;
   concepts?: Array<{ name: string; visual_type: string }>;
+  stage?: string;
+  content?: string;
+  novelty?: { contribution: string; key_mechanism: string; prior_limitation: string; focus_keywords: string[] };
 }
 
 export async function submitJob(

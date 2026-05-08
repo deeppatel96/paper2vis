@@ -274,14 +274,17 @@ def _process_concept(
                 if gen_mode == "two_pass":
                     storyboard = codegen.get_storyboard(concept)
                     store.write(f"{prefix}/storyboard.md", storyboard.encode())
+                    emit({"type": "llm_output", "index": idx, "stage": "storyboard", "content": storyboard})
                     code = codegen._code_from_storyboard(storyboard, rag_examples=rag_block)
                 elif gen_mode == "dsl":
                     storyboard = codegen.get_storyboard(concept)
                     store.write(f"{prefix}/storyboard.md", storyboard.encode())
+                    emit({"type": "llm_output", "index": idx, "stage": "storyboard", "content": storyboard})
                     code = codegen.generate_dsl(concept, storyboard=storyboard, rag_examples=rag_block)
                 else:  # direct
                     code = codegen.generate_direct(concept, rag_examples=rag_block)
                 store.write(f"{prefix}/scene.py", code.encode())
+                emit({"type": "llm_output", "index": idx, "stage": "code", "content": code})
             except Exception as exc:
                 emit({"type": "concept_error", "index": idx, "name": name,
                       "message": f"[{name}] Codegen failed: {exc}"})
@@ -357,6 +360,7 @@ def _process_concept(
                         break
                     seen_hashes.add(new_hash)
                     current_code = fixed_code
+                    emit({"type": "llm_output", "index": idx, "stage": "code", "content": fixed_code})
                 except Exception:
                     break
             else:
@@ -456,6 +460,7 @@ def _process_concept(
                     lines += ["## Fix", "", result.fix_instruction, ""]
                 critique_md = "\n".join(lines)
                 store.write(f"{prefix}/critique.md", critique_md.encode())
+                emit({"type": "llm_output", "index": idx, "stage": "critique", "content": critique_md})
                 emit({"type": "step", "index": idx,
                       "message": f"[{name}] Critic pass {crit_iter}: {result.score}/10 {status}"})
 

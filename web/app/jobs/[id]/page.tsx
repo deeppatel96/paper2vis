@@ -7,6 +7,7 @@ import { DashboardStats, PipelineStageTracker, ActivityFeed } from "@/components
 import PaperTab from "@/components/PaperTab";
 import InteractiveConceptMap from "@/components/InteractiveConceptMap";
 import ConceptSelectionPanel from "@/components/ConceptSelectionPanel";
+import LLMPreviewPanel from "@/components/LLMPreviewPanel";
 
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -14,6 +15,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const [job, setJob] = useState<JobState | null>(null);
   const [showPaper, setShowPaper] = useState(false);
   const [streamEpoch, setStreamEpoch] = useState(0);
+  const [liveOutputs, setLiveOutputs] = useState<Map<string, string>>(new Map());
 
   const refresh = useCallback(async () => {
     try {
@@ -29,7 +31,20 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   useEffect(() => {
     if (!id) return;
-    const stop = streamJob(id, () => refresh(), () => refresh());
+    const stop = streamJob(
+      id,
+      (event) => {
+        if (event.type === "llm_output" && event.index !== undefined && event.stage && event.content !== undefined) {
+          setLiveOutputs((prev) => {
+            const next = new Map(prev);
+            next.set(`${event.index}:${event.stage}`, event.content!);
+            return next;
+          });
+        }
+        refresh();
+      },
+      () => refresh(),
+    );
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, streamEpoch]);
@@ -155,6 +170,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </div>
         )}
 
+        {/* ── LLM live output preview ─────────────────────────────────── */}
+        <LLMPreviewPanel outputs={liveOutputs} stubs={stubs} />
+
         {/* ── Concept cards — appear live as each finishes ────────────── */}
         {stubs.length === 0 && isActive && !job.awaiting_selection && (
           <div className="text-center py-10 text-gray-600 text-sm animate-pulse">
@@ -170,7 +188,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               const full = job.concepts.find((c) => c.index === stub.index);
               return full
                 ? <ConceptCard key={stub.index} concept={full} />
-                : <ConceptSkeleton key={stub.index} name={stub.name} visual_type={stub.visual_type} />;
+                : <ConceptSkeleton key={stub.index} name={stub.name} visual_type={stub.visual_type} hasFigures={!!job.options.figure_context} />;
             })}
           </div>
         )}

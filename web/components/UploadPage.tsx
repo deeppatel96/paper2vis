@@ -159,8 +159,10 @@ export default function UploadPage() {
           <div className="space-y-3 rounded-xl bg-gray-900 border border-gray-700 p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Options</p>
 
-            <div className="flex items-center gap-4">
-              <label className="text-sm text-gray-300 w-36 shrink-0">Concepts</label>
+            <div className={`flex items-center gap-4 ${noveltyFocus ? "opacity-40 pointer-events-none" : ""}`}>
+              <label className="text-sm text-gray-300 w-36 shrink-0">
+                Concepts {noveltyFocus && <span className="text-[10px] text-blue-400 font-mono ml-1">auto</span>}
+              </label>
               <input type="range" min={1} max={tierLimits.maxConcepts} value={maxConcepts}
                 onChange={(e) => { const v = Number(e.target.value); setMaxConcepts(v); setParallelConcepts(p => Math.min(p, v)); }}
                 className="flex-1 accent-blue-500" />
@@ -180,8 +182,10 @@ export default function UploadPage() {
               />
             </div>
 
-            <div className="flex items-center gap-4">
-              <label className="text-sm text-gray-300 w-36 shrink-0">Parallel concepts</label>
+            <div className={`flex items-center gap-4 ${noveltyFocus ? "opacity-40 pointer-events-none" : ""}`}>
+              <label className="text-sm text-gray-300 w-36 shrink-0">
+                Parallel concepts {noveltyFocus && <span className="text-[10px] text-blue-400 font-mono ml-1">auto</span>}
+              </label>
               <input type="range" min={1} max={maxConcepts} value={parallelConcepts}
                 onChange={(e) => setParallelConcepts(Number(e.target.value))}
                 className="flex-1 accent-blue-500" />
@@ -236,16 +240,16 @@ export default function UploadPage() {
               </span>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className={`flex items-center gap-4 ${noveltyFocus ? "opacity-40 pointer-events-none" : ""}`}>
               <label className="text-sm text-gray-300 w-36 shrink-0">Pick concepts</label>
-              <button type="button" onClick={() => setConceptSelection(!conceptSelection)}
+              <button type="button" onClick={() => !noveltyFocus && setConceptSelection(!conceptSelection)}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-                  ${conceptSelection ? "bg-blue-500" : "bg-gray-600"}`}>
+                  ${conceptSelection && !noveltyFocus ? "bg-blue-500" : "bg-gray-600"}`}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-                  ${conceptSelection ? "translate-x-6" : "translate-x-1"}`} />
+                  ${conceptSelection && !noveltyFocus ? "translate-x-6" : "translate-x-1"}`} />
               </button>
               <span className="text-xs text-gray-500">
-                {conceptSelection ? "Choose which concepts to animate" : "Animate all extracted concepts"}
+                {noveltyFocus ? "Handled by novel focus" : conceptSelection ? "Choose which concepts to animate" : "Animate all extracted concepts"}
               </span>
             </div>
 

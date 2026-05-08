@@ -1,4 +1,4 @@
-FROM python:latest
+FROM python:3.12-slim
 
 # System deps for Manim: LaTeX, cairo, pango, ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -72,7 +72,7 @@ export default function UploadPage() {
   const [quality, setQuality] = useState("low_quality");
   const [figureContext, setFigureContext] = useState(false);
   const [parallelConcepts, setParallelConcepts] = useState(4);
-  const [maxRetries, setMaxRetries] = useState(6);
+  const [maxRetries, setMaxRetries] = useState(5);
   const [voice, setVoice] = useState(true);
   const [generationMode, setGenerationMode] = useState("two_pass");
   const [conceptSelection, setConceptSelection] = useState(false);

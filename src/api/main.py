@@ -35,17 +35,12 @@ runner.init(DATA_DIR)
 app = FastAPI(title="paper2vis API")
 
 # ---------------------------------------------------------------------------
-# CORS — allow localhost for dev and the deployed Vercel frontend
+# CORS
 # ---------------------------------------------------------------------------
-
-_cors_origins = ["http://localhost:3000"]
-_vercel_url = os.environ.get("FRONTEND_URL", "")
-if _vercel_url:
-    _cors_origins.append(_vercel_url.rstrip("/"))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

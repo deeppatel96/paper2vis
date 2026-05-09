@@ -196,11 +196,8 @@ async def create_job(
             detail=f"Monthly limit reached ({used}/{limit} jobs). Upgrade to Pro for more.",
         )
 
-    # Cap options to tier maximums; novelty focus uses the full tier limit
-    if novelty_focus:
-        max_concepts = cfg["max_concepts_limit"]
-    else:
-        max_concepts = min(max_concepts, cfg["max_concepts_limit"])
+    # Cap options to tier maximums
+    max_concepts = min(max_concepts, cfg["max_concepts_limit"])
     quality_order = ["low_quality", "medium_quality", "high_quality"]
     tier_quality_idx = quality_order.index(cfg["quality_limit"])
     req_quality_idx = quality_order.index(quality) if quality in quality_order else 0

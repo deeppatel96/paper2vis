@@ -183,14 +183,12 @@ export default function UploadPage() {
           <div className="space-y-3 rounded-xl bg-gray-900 border border-gray-700 p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Options</p>
 
-            <div className={`flex items-center gap-4 ${noveltyFocus ? "opacity-40 pointer-events-none" : ""}`}>
-              <label className="text-sm text-gray-300 w-36 shrink-0">
-                Concepts {noveltyFocus && <span className="text-[10px] text-blue-400 font-mono ml-1">auto</span>}
-              </label>
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0">Concepts</label>
               <input type="range" min={1} max={tierLimits.maxConcepts} value={maxConcepts}
                 onChange={(e) => { const v = Number(e.target.value); setMaxConcepts(v); setParallelConcepts(p => Math.min(p, v)); }}
                 className="flex-1 accent-blue-500" />
-              <span className="text-sm text-white w-8 text-right">{noveltyFocus ? "max" : maxConcepts}</span>
+              <span className="text-sm text-white w-4 text-right">{maxConcepts}</span>
             </div>
 
             <div className="flex items-center gap-4">

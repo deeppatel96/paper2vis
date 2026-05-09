@@ -13,6 +13,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   const { id } = use(params);
   const { getToken } = useAuth();
   const [job, setJob] = useState<JobState | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [showPaper, setShowPaper] = useState(false);
   const [streamEpoch, setStreamEpoch] = useState(0);
   const [liveOutputs, setLiveOutputs] = useState<Map<string, string>>(new Map());
@@ -22,8 +23,10 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       const token = await getToken();
       const j = await getJob(id, token);
       setJob(j);
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      const msg = String(err);
+      if (msg.includes("404") || msg.includes("Not Found")) setNotFound(true);
+      else console.error(err);
     }
   }, [id, getToken]);
 
@@ -60,6 +63,18 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
       refresh();
     } catch (err) { console.error(err); }
   }, [id, getToken, refresh]);
+
+  if (notFound) {
+    return (
+      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <p className="text-gray-400 text-sm">Job not found</p>
+          <p className="text-gray-600 text-xs font-mono">{id}</p>
+          <a href="/" className="text-blue-400 hover:text-blue-300 text-sm underline">← Back to home</a>
+        </div>
+      </main>
+    );
+  }
 
   if (!job) {
     return (

@@ -21,6 +21,19 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS usage_clerk_month
   ON usage (clerk_id, date_trunc('month', created_at AT TIME ZONE 'UTC'));
 
+-- Jobs (persisted across redeployments, per-user)
+CREATE TABLE IF NOT EXISTS jobs (
+  job_id       TEXT PRIMARY KEY,
+  clerk_id     TEXT NOT NULL,
+  pdf_name     TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'queued',
+  state        JSONB NOT NULL DEFAULT '{}',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS jobs_clerk_created ON jobs (clerk_id, created_at DESC);
+
 -- Invite codes (unique per person, single-use)
 CREATE TABLE IF NOT EXISTS invite_codes (
   code        TEXT PRIMARY KEY,

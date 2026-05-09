@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, UserButton } from "@clerk/nextjs";
 import FileUpload from "@/components/FileUpload";
-import { submitJob, getUsage, UsageInfo } from "@/lib/api";
+import { submitJob, getUsage, getVersion, UsageInfo } from "@/lib/api";
 
 type PickerOption = { value: string; label: string; description: string; disabled?: boolean };
 
@@ -98,6 +98,9 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
+  const [version, setVersion] = useState("");
+
+  useEffect(() => { getVersion().then(setVersion); }, []);
 
   useEffect(() => {
     getToken().then((token) => getUsage(token)).then((u) => {
@@ -156,7 +159,14 @@ export default function UploadPage() {
         {/* Header with user info */}
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <h1 className="text-3xl font-bold tracking-tight">New job</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-bold tracking-tight">New job</h1>
+              {version && (
+                <span className="text-[10px] font-mono text-gray-600 border border-gray-800 rounded px-1.5 py-0.5 mt-1">
+                  v{version}
+                </span>
+              )}
+            </div>
             <p className="text-gray-400 text-sm">Upload a paper PDF to generate animations</p>
           </div>
           <div className="flex flex-col items-end gap-1">

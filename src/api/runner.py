@@ -38,6 +38,49 @@ class JobCancelledError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Supabase helpers
+# ---------------------------------------------------------------------------
+
+def _get_sb():
+    """Return a Supabase client or None if not configured."""
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception:
+        return None
+
+
+def _sync_to_supabase(job_id: str) -> None:
+    """Upsert the job state to Supabase. Best-effort, silent on failure."""
+    sb = _get_sb()
+    if sb is None:
+        return
+    with _lock:
+        data = _jobs.get(job_id)
+        if data is None:
+            return
+        clerk_id = data.get("_clerk_id", "")
+        state = {k: v for k, v in data.items() if not k.startswith("_")}
+        completed_at = data.get("completed_at")
+    try:
+        sb.table("jobs").upsert({
+            "job_id": job_id,
+            "clerk_id": clerk_id,
+            "pdf_name": state.get("pdf_name", ""),
+            "status": str(state.get("status", "queued")),
+            "state": json.dumps(state, default=str),
+            "created_at": state.get("created_at"),
+            "completed_at": completed_at,
+        }).execute()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Persistence helpers
 # ---------------------------------------------------------------------------
 
@@ -95,7 +138,7 @@ def _load_persisted_jobs() -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def create_job(job_id: str, pdf_name: str, options: dict) -> JobState:
+def create_job(job_id: str, pdf_name: str, options: dict, clerk_id: str = "") -> JobState:
     with _lock:
         _jobs[job_id] = {
             "job_id": job_id,
@@ -106,13 +149,16 @@ def create_job(job_id: str, pdf_name: str, options: dict) -> JobState:
             "concepts": [],
             "concept_stubs": [],
             "figures": [],
+            "_clerk_id": clerk_id,
             "_raw_concepts": [],
             "error": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         _events[job_id] = []
     _persist(job_id)
-    return JobState(**_jobs[job_id])
+    _sync_to_supabase(job_id)
+    state = {k: v for k, v in _jobs[job_id].items() if not k.startswith("_")}
+    return JobState(**state)
 
 
 def submit_job(job_id: str, fn: Callable, **kwargs: Any) -> None:
@@ -122,13 +168,55 @@ def submit_job(job_id: str, fn: Callable, **kwargs: Any) -> None:
 def get_job(job_id: str) -> JobState | None:
     with _lock:
         data = _jobs.get(job_id)
-    return JobState(**data) if data else None
+    if data is not None:
+        state = {k: v for k, v in data.items() if not k.startswith("_")}
+        return JobState(**state)
+    # Fall back to Supabase for jobs not in memory (e.g. after redeploy)
+    sb = _get_sb()
+    if sb is not None:
+        try:
+            row = sb.table("jobs").select("state").eq("job_id", job_id).maybe_single().execute()
+            if row and row.data:
+                state = row.data["state"]
+                if isinstance(state, str):
+                    state = json.loads(state)
+                return JobState(**state)
+        except Exception:
+            pass
+    return None
 
 
-def list_jobs() -> list[JobState]:
+def list_jobs(clerk_id: str | None = None) -> list[JobState]:
     with _lock:
-        jobs = [JobState(**d) for d in _jobs.values()]
-    return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+        memory_data = {
+            jid: d for jid, d in _jobs.items()
+            if clerk_id is None or d.get("_clerk_id") == clerk_id
+        }
+    result: dict[str, JobState] = {}
+    for jid, d in memory_data.items():
+        state = {k: v for k, v in d.items() if not k.startswith("_")}
+        try:
+            result[jid] = JobState(**state)
+        except Exception:
+            pass
+    # Supplement with Supabase (completed jobs not in memory)
+    sb = _get_sb()
+    if sb is not None and clerk_id is not None:
+        try:
+            rows = sb.table("jobs").select("job_id, state").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(100).execute()
+            for row in (rows.data or []):
+                jid = row["job_id"]
+                if jid not in result:
+                    state = row["state"]
+                    if isinstance(state, str):
+                        state = json.loads(state)
+                    try:
+                        result[jid] = JobState(**state)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return sorted(result.values(), key=lambda j: j.created_at, reverse=True)
 
 
 def list_events(job_id: str, after: int = 0) -> list[dict]:
@@ -174,12 +262,17 @@ def is_cancelled(job_id: str) -> bool:
 
 
 def update_job(job_id: str, **kwargs: Any) -> None:
+    terminal = False
     with _lock:
         if job_id in _jobs:
             _jobs[job_id].update(kwargs)
-            if kwargs.get("status") in ("done", "failed", "cancelled") and not _jobs[job_id].get("completed_at"):
-                _jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+            if kwargs.get("status") in ("done", "failed", "cancelled"):
+                if not _jobs[job_id].get("completed_at"):
+                    _jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+                terminal = True
     _persist(job_id)
+    if terminal:
+        _sync_to_supabase(job_id)
 
 
 def append_concept(job_id: str, concept: dict) -> None:

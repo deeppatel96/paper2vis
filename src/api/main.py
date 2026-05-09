@@ -34,6 +34,8 @@ runner.init(DATA_DIR)
 
 app = FastAPI(title="paper2vis API")
 
+VERSION = "1.1.0"
+
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
@@ -211,7 +213,7 @@ async def create_job(
     valid_modes = {"two_pass", "dsl", "direct", "all"}
     gen_mode = generation_mode if generation_mode in valid_modes else "two_pass"
 
-    tags: list[str] = [gen_mode, tier]
+    tags: list[str] = [gen_mode, tier, f"v{VERSION}"]
     if figure_context:
         tags.append("figures")
     if voice:
@@ -252,15 +254,20 @@ async def create_job(
         "codegen_provider": _infer_provider(codegen_model_override, cfg["codegen_provider"]),
         "codegen_model": codegen_model_override or cfg["codegen_model"],
     }
-    state = runner.create_job(job_id, pdf.filename or "paper.pdf", options)
+    state = runner.create_job(job_id, pdf.filename or "paper.pdf", options, clerk_id=clerk_id)
     _record_usage(clerk_id, job_id)
     runner.submit_job(job_id, run_pipeline, pdf_key=pdf_key, options=options, store=store)
     return state
 
 
+@app.get("/api/version")
+async def get_version():
+    return {"version": VERSION}
+
+
 @app.get("/api/jobs", response_model=list[JobState])
 async def list_jobs(clerk_id: str = Depends(verify_token)):
-    return runner.list_jobs()
+    return runner.list_jobs(clerk_id=clerk_id)
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobState)

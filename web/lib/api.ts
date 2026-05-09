@@ -11,6 +11,17 @@ export interface UsageInfo {
   reset_date: string;
 }
 
+export async function getVersion(): Promise<string> {
+  try {
+    const res = await fetch(`${API}/api/version`);
+    if (!res.ok) return "";
+    const data = await res.json();
+    return data.version ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function getUsage(token?: string | null): Promise<UsageInfo> {
   const res = await fetch(`${API}/api/me/usage`, { headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());

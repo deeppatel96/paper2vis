@@ -162,9 +162,14 @@ export default function UploadPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-3xl font-bold tracking-tight">New job</h1>
               {version && (
-                <span className="text-[10px] font-mono text-gray-600 border border-gray-800 rounded px-1.5 py-0.5 mt-1">
+                <a
+                  href={`https://github.com/deeppatel96/paper2vis/releases/tag/v${version}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-mono text-gray-600 border border-gray-800 rounded px-1.5 py-0.5 mt-1 hover:text-gray-400 hover:border-gray-600 transition-colors"
+                >
                   v{version}
-                </span>
+                </a>
               )}
             </div>
             <p className="text-gray-400 text-sm">Upload a paper PDF to generate animations</p>

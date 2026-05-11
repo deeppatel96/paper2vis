@@ -68,7 +68,7 @@ Auto-injected constants: `CONTENT_CENTER` (= DOWN*0.5), `CONTENT_TOP` (= UP*2.7)
 **Colors:** BLUE/BLUE_B/BLUE_C/BLUE_D, GREEN/GREEN_B/GREEN_C, RED, ORANGE, YELLOW,
 WHITE, GREY/GREY_B/GREY_C/GREY_D, TEAL, PURPLE — no LIGHT_* or DARK_*.
 
-**Equations — use MathTex (LaTeX is installed):** Prefer `MathTex(r"...")` for ALL math — NEVER put math or backslashes inside `Text()`. Use `TransformMatchingShapes` to morph formulas step-by-step. Use `Text()` only for plain English labels with explicit `font_size` (default 48 is huge): title=34, body=24, annotations=18.
+**Equations — use MathTex (LaTeX is installed):** Prefer `MathTex(r"...")` for ALL math — NEVER put subscripts, superscripts, or LaTeX inside `Text()`. Use `TransformMatchingShapes` to morph formulas step-by-step. Underscore in `Text()` shows as literal `_`, NOT a subscript — always use `MathTex(r"d_A")` not `Text("d_A")`. Use `Text()` only for plain English labels with explicit `font_size` (default 48 is huge): title=34, body=24, annotations=18.
 
 **Division safety:** guard with `max(val, 0.001)` before dividing by a variable.
 

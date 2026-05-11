@@ -211,7 +211,15 @@ Study this example carefully:
 - `eq.get_part_by_tex("x_i")` to isolate and highlight sub-expressions
 - For animated values: `always_redraw(lambda: MathTex(f"w = {t.get_value():.2f}"))`
 - `get_x_axis_label`, `get_y_axis_label` → `Text(...).next_to(axes.get_x_axis(), RIGHT, buff=0.15)`
-- Use `Text()` only for plain English labels and annotations, NEVER for math symbols or LaTeX — use `MathTex(r"...")` for ALL math
+
+**CRITICAL — Text() vs MathTex():**
+- `Text()` is for plain English ONLY: `Text("Encoder", font_size=24)` ✓
+- ANY string with subscripts, superscripts, fractions, or variable names MUST use `MathTex(r"...")`
+  - `Text("d_A")` ✗ → `MathTex(r"d_A")` ✓  (underscore renders as literal underscore in Text!)
+  - `Text("x^2")` ✗ → `MathTex(r"x^2")` ✓
+  - `Text("O(n^2)")` ✗ → `MathTex(r"O(n^2)")` ✓
+  - `Text("r·d_B")` ✗ → `MathTex(r"r \cdot d_B")` ✓
+  - `Text("α, β, γ")` ✗ → `MathTex(r"\alpha, \beta, \gamma")` ✓
 - Every `Text()` call MUST include `font_size` explicitly (default is 48 which is huge): title=34, body=24, annotations=18, tiny=14
 
 **Animation quality:**

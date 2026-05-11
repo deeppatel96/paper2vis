@@ -376,6 +376,53 @@ async def serve_file(path: str):
 # Job control
 # ---------------------------------------------------------------------------
 
+@app.post("/api/jobs/{job_id}/clone", response_model=JobState)
+async def clone_job(job_id: str, clerk_id: str = Depends(verify_token)):
+    """Re-submit a job with the same PDF and options. Useful for re-running after config changes."""
+    state = runner.get_job(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Enforce monthly limit for the cloning user
+    tier = _get_user_tier(clerk_id)
+    cfg = TIER_CONFIGS.get(tier, TIER_CONFIGS["mini"])
+    used = _get_monthly_usage(clerk_id)
+    if used >= cfg["jobs_per_month"]:
+        raise HTTPException(status_code=429, detail=f"Monthly limit reached ({used}/{cfg['jobs_per_month']} jobs).")
+
+    # Locate the original PDF in storage
+    pdf_key = f"{job_id}/upload/{state.pdf_name}"
+    pdf_path = store.path(pdf_key)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Original PDF not found in storage.")
+    pdf_bytes = pdf_path.read_bytes()
+
+    # Build options from the original job, applying current tier caps
+    orig = dict(state.options)
+    quality_order = ["low_quality", "medium_quality", "high_quality"]
+    tier_q = quality_order.index(cfg["quality_limit"])
+    req_q = quality_order.index(orig.get("quality", "medium_quality")) if orig.get("quality") in quality_order else 0
+    quality = quality_order[min(req_q, tier_q)]
+
+    # Stamp with new version tag so you can tell runs apart
+    tags: list[str] = [t for t in (orig.get("tags") or []) if not t.startswith("v")]
+    tags.append(f"v{VERSION}")
+    tags.append("clone")
+
+    options = {**orig, "quality": quality, "tags": tags,
+               "max_concepts": min(orig.get("max_concepts", 4), cfg["max_concepts_limit"])}
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    new_id = f"{ts}_{uuid.uuid4().hex[:8]}"
+    new_pdf_key = f"{new_id}/upload/{state.pdf_name}"
+    store.write(new_pdf_key, pdf_bytes)
+
+    new_state = runner.create_job(new_id, state.pdf_name, options, clerk_id=clerk_id)
+    _record_usage(clerk_id, new_id)
+    runner.submit_job(new_id, run_pipeline, pdf_key=new_pdf_key, options=options, store=store)
+    return new_state
+
+
 @app.post("/api/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str, clerk_id: str = Depends(verify_token)):
     state = runner.get_job(job_id)

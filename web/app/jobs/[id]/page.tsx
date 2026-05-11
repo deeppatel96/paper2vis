@@ -10,7 +10,8 @@ export interface ConceptStageInfo {
   score?: number;
 }
 import { useAuth } from "@clerk/nextjs";
-import { getJob, streamJob, cancelJob, JobState } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { getJob, streamJob, cancelJob, cloneJob, JobState } from "@/lib/api";
 import ConceptCard, { ConceptSkeleton } from "@/components/ConceptCard";
 import { DashboardStats, PipelineStageTracker, ActivityFeed } from "@/components/Dashboard";
 import PaperTab from "@/components/PaperTab";
@@ -20,7 +21,9 @@ import ConceptSelectionPanel from "@/components/ConceptSelectionPanel";
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { getToken } = useAuth();
+  const router = useRouter();
   const [job, setJob] = useState<JobState | null>(null);
+  const [cloning, setCloning] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [showPaper, setShowPaper] = useState(false);
@@ -121,6 +124,18 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
     } catch (err) { console.error(err); }
   }, [id, getToken, refresh]);
 
+  const handleClone = useCallback(async () => {
+    setCloning(true);
+    try {
+      const token = await getToken();
+      const newJob = await cloneJob(id, token);
+      router.push(`/jobs/${newJob.job_id}`);
+    } catch (err) {
+      console.error(err);
+      setCloning(false);
+    }
+  }, [id, getToken, router]);
+
   if (notFound) {
     return (
       <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
@@ -190,6 +205,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
                 {showPaper ? "Hide Figures" : `Figures (${job.figures.length})`}
               </button>
             )}
+            <button
+              onClick={handleClone}
+              disabled={cloning}
+              className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200 transition-colors font-medium disabled:opacity-40"
+            >
+              {cloning ? "Cloning…" : "Try again ↗"}
+            </button>
             {isActive && (
               <button
                 onClick={handleCancel}

@@ -236,6 +236,12 @@ export async function cancelJob(jobId: string, token?: string | null): Promise<v
   if (!res.ok) throw new Error(await res.text());
 }
 
+export async function cloneJob(jobId: string, token?: string | null): Promise<JobState> {
+  const res = await fetch(`${API}/api/jobs/${jobId}/clone`, { method: "POST", headers: authHeader(token) });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export interface AdminUser {
   clerk_id: string;
   tier: string;

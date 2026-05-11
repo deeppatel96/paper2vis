@@ -76,7 +76,7 @@ _TIER_DEFAULTS: dict[str, dict] = {
         "codegen_provider": "anthropic",
         "codegen_model": "claude-opus-4-6",
         "max_concepts_limit": 16,
-        "quality_limit": "high_quality",
+        "quality_limit": "medium_quality",
         "jobs_per_month": 50,
     },
 }

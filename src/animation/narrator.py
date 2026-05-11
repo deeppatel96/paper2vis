@@ -32,7 +32,7 @@ class ManimNarrator:
         """Ask the LLM to write a narration for a video of the given duration."""
         from src.llm_utils import call_llm
 
-        target_words = int(video_duration * 130 / 60)  # ~130 wpm
+        target_words = int(video_duration * 115 / 60)  # ~115 wpm (conservative; TTS runs ~150+ wpm)
 
         # Prefer concise shot list over full storyboard for beat context
         if shot_list:
@@ -78,7 +78,7 @@ class ManimNarrator:
         if not words:
             return "WEBVTT\n\n"
 
-        wps = 130 / 60  # words per second
+        wps = 115 / 60  # words per second (matches script generation rate)
         chunk_size = max(6, int(wps * 4))
         chunks = [words[i : i + chunk_size] for i in range(0, len(words), chunk_size)]
 
@@ -103,8 +103,10 @@ class ManimNarrator:
     def merge_audio_video(
         self, video_path: Path, audio_bytes: bytes, output_path: Path
     ) -> Path:
-        """Overlay audio on video with ffmpeg. Trims to shortest stream.
+        """Overlay audio on video with ffmpeg, time-stretching audio to fit video duration.
 
+        If the TTS audio is longer than the video we slow it down (up to 0.75x) so it
+        finishes with the video rather than getting cut off by -shortest.
         Safe to call with video_path == output_path (writes to a temp file first).
         """
         ffmpeg = _ffmpeg_bin("ffmpeg")
@@ -114,30 +116,57 @@ class ManimNarrator:
             tmp.write(audio_bytes)
             audio_tmp = Path(tmp.name)
 
-        # Use a unique temp output so in-place (video_path == output_path) is safe
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=output_path.parent) as out_tmp:
             out_tmp_path = Path(out_tmp.name)
 
         try:
-            r = subprocess.run(
-                [ffmpeg, "-y",
-                 "-i", str(video_path),
-                 "-i", str(audio_tmp),
-                 "-c:v", "copy",
-                 "-c:a", "aac",
-                 "-shortest",
-                 "-map", "0:v:0",
-                 "-map", "1:a:0",
-                 str(out_tmp_path)],
-                capture_output=True,
-            )
+            # Measure actual audio duration
+            audio_dur = _get_video_duration(audio_tmp)
+            video_dur = _get_video_duration(video_path)
+
+            # Build audio filter: stretch audio to fit video if it overshoots by >5%
+            # atempo range is [0.5, 2.0]; values below 0.75 sound unnatural so cap there.
+            audio_filter = None
+            if video_dur > 0 and audio_dur > video_dur * 1.05:
+                tempo = max(0.75, audio_dur / video_dur)
+                # atempo must be chained if outside [0.5,2.0], but we cap at 0.75 so one filter is fine
+                audio_filter = f"atempo={tempo:.4f}"
+
+            if audio_dur > video_dur * 1.02:
+                # Audio runs longer than video: freeze last frame to cover remaining audio.
+                # tpad requires re-encoding video (can't stream-copy with a filter).
+                extra = audio_dur - video_dur
+                vf = f"tpad=stop_mode=clone:stop_duration={extra:.3f}"
+                cmd = [ffmpeg, "-y",
+                       "-i", str(video_path),
+                       "-i", str(audio_tmp),
+                       "-vf", vf,
+                       "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                       "-c:a", "aac",
+                       "-map", "0:v:0",
+                       "-map", "1:a:0"]
+                if audio_filter:
+                    cmd += ["-af", audio_filter]
+            else:
+                # Video runs longer (or same): pad audio with silence to fill video duration.
+                af = audio_filter or "anull"
+                cmd = [ffmpeg, "-y",
+                       "-i", str(video_path),
+                       "-i", str(audio_tmp),
+                       "-c:v", "copy",
+                       "-c:a", "aac",
+                       "-af", f"{af},apad",
+                       "-t", f"{video_dur:.3f}",
+                       "-map", "0:v:0",
+                       "-map", "1:a:0"]
+            cmd.append(str(out_tmp_path))
+
+            r = subprocess.run(cmd, capture_output=True)
             if r.returncode != 0:
                 out_tmp_path.unlink(missing_ok=True)
                 raise RuntimeError(
                     f"ffmpeg merge failed: {r.stderr.decode(errors='replace')[:600]}"
                 )
-            # Guard: only replace if the merged file is at least as large as the original.
-            # A 0-length or truncated output means -shortest killed the video (empty/bad audio).
             orig_size = video_path.stat().st_size if video_path.exists() else 0
             merged_size = out_tmp_path.stat().st_size
             if merged_size < max(orig_size // 2, 1024):

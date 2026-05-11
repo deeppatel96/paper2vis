@@ -118,26 +118,26 @@ export default function UploadPage() {
       const limits = TIER_LIMITS[u.tier] ?? TIER_LIMITS.mini;
       if (u.tier === "pro") {
         setMaxConcepts(8);
-        setQuality("high_quality");
+        setQuality("medium_quality");
         setParallelConcepts(3);
         setMaxRetries(limits.maxRetries);
-        setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
-        setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
+        setLlmModel("gpt-4o-2024-11-20");
+        setCodegenModel("claude-sonnet-4-6");
       } else {
         setMaxConcepts(Math.min(maxConcepts, limits.maxConcepts));
         setMaxRetries(r => Math.min(r, limits.maxRetries));
         setQuality("low_quality");
-        setLlmModel(m => EXTRACTION_MODELS.find(o => !o.proOnly)?.value ?? m);
-        setCodegenModel(m => CODEGEN_MODELS.find(o => !o.proOnly)?.value ?? m);
+        setLlmModel("gpt-4o-mini-2024-07-18");
+        setCodegenModel("claude-sonnet-4-6");
       }
     }).catch(() => {
       // Local dev — no auth configured, default to pro limits
       setMaxConcepts(8);
-      setQuality("high_quality");
+      setQuality("medium_quality");
       setParallelConcepts(3);
       setMaxRetries(TIER_LIMITS.pro.maxRetries);
-      setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
-      setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
+      setLlmModel("gpt-4o-2024-11-20");
+      setCodegenModel("claude-sonnet-4-6");
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

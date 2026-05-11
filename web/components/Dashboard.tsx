@@ -235,12 +235,10 @@ export function PipelineStageTracker({ job }: { job: JobState }) {
 
   const globalStages: Array<{ label: string; state: StageState; sub?: string }> = [
     { label: "Parse PDF", state: hasParsed ? "done" : (job.status === "running" ? "running" : "pending") },
-    {
+    ...(job.options.figure_context ? [{
       label: "Extract Figures",
-      state: job.options.figure_context
-        ? (hasFigures ? "done" : (hasParsed ? "running" : "pending"))
-        : "skip",
-    },
+      state: (hasFigures ? "done" : (hasParsed ? "running" : "pending")) as StageState,
+    }] : []),
     {
       label: "Find Concepts",
       state: hasConcepts ? "done" : (hasParsed ? "running" : "pending"),

@@ -5,9 +5,13 @@ Bridges the existing Pipeline to the API layer.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 import re
 import time
+
+logger = logging.getLogger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -70,9 +74,8 @@ def _code_hash(code: str) -> str:
 
 def _diff_trigger(report_json: str, limit: int = 130) -> str:
     """Summarise a visual-diff JSON report into a short trigger string."""
-    import json as _json
     try:
-        data = _json.loads(report_json.strip("`").strip())
+        data = json.loads(reportjson.strip("`").strip())
         diffs = data.get("differences", [])
         if diffs:
             return "; ".join(str(d) for d in diffs[:2])[:limit]
@@ -94,71 +97,100 @@ def _make_tools(options: dict) -> tuple[ManimCodeGenerator, ManimRenderer, Manim
     model = options.get("llm_model") or os.environ.get("LLM_MODEL", "gpt-4.1")
     codegen_provider = options.get("codegen_provider") or os.environ.get("CODEGEN_PROVIDER", provider)
     codegen_model = options.get("codegen_model") or os.environ.get("CODEGEN_MODEL", _DEFAULT_MODELS.get(codegen_provider, model))
+    critic_provider = options.get("critic_provider") or codegen_provider
+    critic_model = options.get("critic_model") or os.environ.get("CRITIC_MODEL", codegen_model)
     return (
         ManimCodeGenerator(provider=codegen_provider, model=codegen_model),
         ManimRenderer(quality=options.get("quality", "medium_quality")),
-        ManimCritic(provider=codegen_provider, model=codegen_model),
+        ManimCritic(provider=critic_provider, model=critic_model),
         ManimNarrator(provider=codegen_provider, model=codegen_model),
     )
 
 
-def _generate_all_modes(
-    codegen, concept, rag_block: str, idx: int, name: str,
-    prefix: str, store, renderer, max_retries: int, emit, job_id: str, _check,
-    narrator=None, options: dict | None = None, storyboard_ref: list | None = None,
-) -> tuple[str | None, str | None]:
-    """Generate with all three modes, render each, return (best_code, storyboard).
+_MODE_LABELS: dict[str, str] = {
+    "two_pass": "Two-pass",
+    "dsl":      "Typed DSL",
+    "direct":   "Direct",
+    "lean":     "Lean/Mathlib",
+}
 
-    The three modes run sequentially (not parallel — avoids thread issues).
-    Each result is stored as a history entry. The method returns the code and
-    storyboard from whichever mode produced a video (first success wins, which
-    will be picked up by the main render loop for critic/narration).
+
+def _generate_multi_mode(
+    modes_to_run: list[str],
+    codegen, concept, rag_block: str, idx: int, name: str,
+    prefix: str, store, renderer, emit, job_id: str, _check,
+    narrator=None, options: dict | None = None,
+) -> tuple[str | None, str | None, list[dict]]:
+    """Generate with multiple modes, render each, return (best_code, storyboard, history_entries).
+
+    Each mode's video is stored as a history entry with a `mode` field so the
+    frontend can render them side-by-side for comparison. Runs sequentially.
     """
-    modes = [
-        ("two_pass", "Two-pass (storyboard→code)"),
-        ("dsl",      "DSL (typed spec→compiler)"),
-        ("direct",   "Direct (single-pass)"),
-    ]
     storyboard: str | None = None
     best_code: str | None = None
+    history_entries: list[dict] = []
 
-    for mode_key, mode_label in modes:
+    for mode_key in modes_to_run:
+        mode_label = _MODE_LABELS.get(mode_key, mode_key)
         _check(job_id)
         try:
-            emit({"type": "step", "index": idx,
+            emit({"type": "concept_stage", "index": idx, "stage": "codegen",
+                  "status": "running", "detail": mode_label})
+            emit({"type": "step", "index": idx, "mode": mode_key,
                   "message": f"[{name}] [{mode_label}] Generating…"})
+            _t_mode = time.monotonic()
             if mode_key == "two_pass":
                 storyboard = codegen.get_storyboard(concept)
                 store.write(f"{prefix}/storyboard.md", storyboard.encode())
+                emit({"type": "llm_output", "index": idx, "mode": mode_key, "stage": "storyboard", "content": storyboard})
+                emit({"type": "step", "index": idx, "mode": mode_key,
+                      "message": f"[{name}] [{mode_label}] Storyboard: {len(storyboard.splitlines())} lines ({time.monotonic()-_t_mode:.1f}s) — generating code…"})
+                _t_mode = time.monotonic()
                 code = codegen._code_from_storyboard(storyboard, rag_examples=rag_block)
             elif mode_key == "dsl":
                 sb = storyboard or codegen.get_storyboard(concept)
                 if not storyboard:
                     storyboard = sb
                     store.write(f"{prefix}/storyboard.md", storyboard.encode())
+                    emit({"type": "llm_output", "index": idx, "mode": mode_key, "stage": "storyboard", "content": storyboard})
+                    emit({"type": "step", "index": idx, "mode": mode_key,
+                          "message": f"[{name}] [{mode_label}] Storyboard: {len(storyboard.splitlines())} lines ({time.monotonic()-_t_mode:.1f}s) — compiling DSL…"})
+                    _t_mode = time.monotonic()
                 code = codegen.generate_dsl(concept, storyboard=sb, rag_examples=rag_block)
             else:
-                code = codegen.generate_direct(concept, rag_examples=rag_block)
+                code = codegen.generate(concept, mode=mode_key, rag_examples=rag_block)
 
             mode_prefix = f"{prefix}/compare_{mode_key}"
             store.write(f"{mode_prefix}/scene.py", code.encode())
+            emit({"type": "llm_output", "index": idx, "mode": mode_key, "stage": "code", "content": code})
+            emit({"type": "step", "index": idx, "mode": mode_key,
+                  "message": f"[{name}] [{mode_label}] Code: {len(code.splitlines())} lines ({time.monotonic()-_t_mode:.1f}s)"})
 
-            emit({"type": "step", "index": idx,
+            emit({"type": "concept_stage", "index": idx, "stage": "render",
+                  "status": "running", "detail": mode_label})
+            emit({"type": "step", "index": idx, "mode": mode_key,
                   "message": f"[{name}] [{mode_label}] Rendering…"})
+            _t_render = time.monotonic()
             validated = codegen.validate_code(code)
             video_path = renderer.render(validated, store.path(f"{mode_prefix}/render"))
             vid_key = f"{mode_prefix}/video.mp4"
             store.write(vid_key, video_path.read_bytes())
-            emit({"type": "step", "index": idx,
-                  "message": f"[{name}] [{mode_label}] Rendered ✓"})
+            emit({"type": "concept_stage", "index": idx, "stage": "render", "status": "done"})
+            emit({"type": "step", "index": idx, "mode": mode_key,
+                  "message": f"[{name}] [{mode_label}] Rendered ({time.monotonic()-_t_render:.1f}s)"})
 
             if best_code is None:
                 best_code = validated
-                if storyboard_ref is not None and storyboard:
-                    storyboard_ref.append(storyboard)
                 store.write(f"{prefix}/scene.py", best_code.encode())
 
-            # Add narration to each compare video
+            entry: dict = {
+                "label": mode_label,
+                "video_url": store.url(vid_key),
+                "trigger": None,
+                "critic_score": None,
+                "mode": mode_key,
+            }
+
             if narrator is not None and os.environ.get("OPENAI_API_KEY") and (options or {}).get("voice", True):
                 try:
                     vid_path = store.path(vid_key)
@@ -167,16 +199,31 @@ def _generate_all_modes(
                     script = narrator.generate_script(name, concept.description, sb, dur, shot_list=concept.shot_list)
                     audio_bytes = narrator.generate_tts(script)
                     narrator.merge_audio_video(vid_path, audio_bytes, store.path(vid_key))
-                    emit({"type": "step", "index": idx,
-                          "message": f"[{name}] [{mode_label}] Narration added"})
                 except Exception as exc:
-                    emit({"type": "warning", "message": f"[{name}] [{mode_label}] Narration skipped: {exc}"})
+                    emit({"type": "warning", "index": idx, "mode": mode_key, "message": f"[{name}] [{mode_label}] Narration skipped: {exc}"})
+
+            history_entries.append(entry)
 
         except Exception as exc:
-            emit({"type": "step", "index": idx,
-                  "message": f"[{name}] [{mode_label}] Failed: {_short_error(str(exc))}"})
+            err_msg = _short_error(str(exc))
+            emit({"type": "concept_stage", "index": idx, "stage": "render",
+                  "status": "error", "detail": err_msg})
+            emit({"type": "step", "index": idx, "mode": mode_key,
+                  "message": f"[{name}] [{mode_label}] Failed: {err_msg}"})
+            full_err = _actionable_error(str(exc))
+            if full_err != err_msg:
+                emit({"type": "step", "index": idx, "mode": mode_key,
+                      "message": f"[{name}] [{mode_label}] Error detail:\n{full_err}"})
+            history_entries.append({
+                "label": mode_label,
+                "video_url": "",
+                "trigger": err_msg,
+                "critic_score": None,
+                "mode": mode_key,
+                "failed": True,
+            })
 
-    return best_code, storyboard
+    return best_code, storyboard, history_entries
 
 
 def _process_concept(
@@ -211,9 +258,12 @@ def _process_concept(
 
     # ── RAG retrieval ─────────────────────────────────────────────────────────
     gen_mode: str = options.get("generation_mode", "two_pass")
+    gen_modes: list[str] = [m.strip() for m in gen_mode.split(",") if m.strip()] or ["two_pass"]
+    is_multi = len(gen_modes) > 1
+    single_mode = gen_modes[0]  # used for tagging events in single-mode path
 
     rag_block = ""
-    if gen_mode != "dsl" and options.get("use_rag", True):
+    if options.get("use_rag", True):
         try:
             from src.animation.rag import get_store
             store_rag = get_store()
@@ -221,23 +271,30 @@ def _process_concept(
                 query = f"{concept.name} {concept.description} {concept.visual_type}"
                 examples = store_rag.retrieve(query, k=2)
                 rag_block = store_rag.format_for_prompt(examples)
-        except Exception:
-            pass  # RAG is best-effort
+        except Exception as e:
+            logger.warning("RAG retrieval failed (best-effort): %s", e)
 
     # ── Codegen ──────────────────────────────────────────────────────────────
     storyboard: str | None = None
     code: str | None = None
     fig_idx: int | None = None
 
+    def _stage(stage: str, status: str, detail: str = "", **kw):
+        emit({"type": "concept_stage", "index": idx, "stage": stage, "status": status,
+              "detail": detail, **kw})
+
     if extracted_figures:
         fig_idx = figure_override_index if figure_override_index is not None \
             else min(idx, len(extracted_figures) - 1)
         try:
+            _stage("codegen", "running")
             emit({"type": "step", "index": idx,
                   "message": f"[{name}] Generating code from figure…"})
             code = codegen.generate_from_figure(concept, extracted_figures[fig_idx].image_bytes)
             store.write(f"{prefix}/scene.py", code.encode())
+            _stage("codegen", "done")
         except Exception as exc:
+            _stage("codegen", "error", detail=_short_error(str(exc)))
             emit({"type": "concept_error", "index": idx, "name": name,
                   "message": f"[{name}] Figure codegen failed: {exc}"})
             _save_concept(job_id, idx, name, concept.visual_type,
@@ -248,45 +305,73 @@ def _process_concept(
                           description=concept.description)
             return
     else:
-        # "all" mode: generate with all three methods, render each, let critic pick best
-        if gen_mode == "all":
-            sb_ref: list[str] = []
-            code, storyboard = _generate_all_modes(
-                codegen, concept, rag_block, idx, name, prefix, store, renderer,
-                max_retries, emit, job_id, _check,
-                narrator=narrator, options=options, storyboard_ref=sb_ref,
+        # Multi-mode comparison: render each selected mode, show side-by-side
+        if is_multi:
+            _stage("codegen", "running", detail=f"comparing {len(gen_modes)} modes")
+            code, storyboard, compare_history = _generate_multi_mode(
+                gen_modes, codegen, concept, rag_block, idx, name, prefix, store, renderer,
+                emit, job_id, _check, narrator=narrator, options=options,
             )
-            if not storyboard and sb_ref:
-                storyboard = sb_ref[0]
             if code is None:
+                _stage("codegen", "error", detail="all modes failed to render")
                 _save_concept(job_id, idx, name, concept.visual_type,
                               fig_idx=None, storyboard=storyboard, video_url=None,
-                              critique_md=None, history=[], subtitle_url=None, duration_ms=None,
+                              critique_md=None, history=compare_history, subtitle_url=None,
+                              duration_ms=int((time.monotonic() - _t0) * 1000),
                               is_regen=is_regen, store=store,
                               extracted_figures=extracted_figures,
                               description=concept.description)
+                if not is_regen:
+                    emit({"type": "concept_done", "index": idx, "name": name,
+                          "message": f"Done: {name}"})
                 return
+            _stage("done", "done")
+            _save_concept(job_id, idx, name, concept.visual_type,
+                          fig_idx=None, storyboard=storyboard,
+                          video_url=compare_history[0]["video_url"] if compare_history else None,
+                          critique_md=None, history=compare_history, subtitle_url=None,
+                          duration_ms=int((time.monotonic() - _t0) * 1000),
+                          is_regen=is_regen, store=store,
+                          extracted_figures=extracted_figures,
+                          description=concept.description)
+            if not is_regen:
+                emit({"type": "concept_done", "index": idx, "name": name,
+                      "message": f"Done: {name}"})
+            return
         else:
+            single_mode = gen_modes[0]
             try:
-                mode_label = {"two_pass": "storyboard + code", "dsl": "DSL spec", "direct": "direct code"}
-                emit({"type": "step", "index": idx,
-                      "message": f"[{name}] Generating ({mode_label.get(gen_mode, gen_mode)})…"})
-                if gen_mode == "two_pass":
+                _stage("codegen", "running")
+                mode_label = {"two_pass": "storyboard + code", "dsl": "DSL spec", "direct": "direct code", "lean": "Lean/Mathlib"}
+                emit({"type": "step", "index": idx, "mode": single_mode,
+                      "message": f"[{name}] Generating ({mode_label.get(single_mode, single_mode)})…"})
+                _t_step = time.monotonic()
+                if single_mode == "two_pass":
                     storyboard = codegen.get_storyboard(concept)
                     store.write(f"{prefix}/storyboard.md", storyboard.encode())
-                    emit({"type": "llm_output", "index": idx, "stage": "storyboard", "content": storyboard})
+                    emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "storyboard", "content": storyboard})
+                    emit({"type": "step", "index": idx, "mode": single_mode,
+                          "message": f"[{name}] Storyboard: {len(storyboard.splitlines())} lines ({time.monotonic()-_t_step:.1f}s) — generating code…"})
+                    _t_step = time.monotonic()
                     code = codegen._code_from_storyboard(storyboard, rag_examples=rag_block)
-                elif gen_mode == "dsl":
+                elif single_mode == "dsl":
                     storyboard = codegen.get_storyboard(concept)
                     store.write(f"{prefix}/storyboard.md", storyboard.encode())
-                    emit({"type": "llm_output", "index": idx, "stage": "storyboard", "content": storyboard})
+                    emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "storyboard", "content": storyboard})
+                    emit({"type": "step", "index": idx, "mode": single_mode,
+                          "message": f"[{name}] Storyboard: {len(storyboard.splitlines())} lines ({time.monotonic()-_t_step:.1f}s) — compiling DSL…"})
+                    _t_step = time.monotonic()
                     code = codegen.generate_dsl(concept, storyboard=storyboard, rag_examples=rag_block)
-                else:  # direct
-                    code = codegen.generate_direct(concept, rag_examples=rag_block)
+                else:  # direct / lean
+                    code = codegen.generate(concept, mode=single_mode, rag_examples=rag_block)
                 store.write(f"{prefix}/scene.py", code.encode())
-                emit({"type": "llm_output", "index": idx, "stage": "code", "content": code})
+                emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "code", "content": code})
+                emit({"type": "step", "index": idx, "mode": single_mode,
+                      "message": f"[{name}] Code: {len(code.splitlines())} lines ({time.monotonic()-_t_step:.1f}s)"})
+                _stage("codegen", "done")
             except Exception as exc:
-                emit({"type": "concept_error", "index": idx, "name": name,
+                _stage("codegen", "error", detail=_short_error(str(exc)))
+                emit({"type": "concept_error", "index": idx, "mode": single_mode, "name": name,
                       "message": f"[{name}] Codegen failed: {exc}"})
                 _save_concept(job_id, idx, name, concept.visual_type,
                               fig_idx=None, storyboard=storyboard, video_url=None,
@@ -308,14 +393,24 @@ def _process_concept(
     _check(job_id)
     # ── Pre-render validation ─────────────────────────────────────────────────
     try:
-        emit({"type": "step", "index": idx, "message": f"[{name}] Validating code…"})
+        _stage("validate", "running")
+        _t_val = time.monotonic()
+        emit({"type": "step", "index": idx, "mode": single_mode, "message": f"[{name}] Validating code…"})
         validated = codegen.validate_code(code)
         if validated != code:
-            emit({"type": "step", "index": idx, "message": f"[{name}] Validation fixed issues — updating scene"})
+            old_lines, new_lines = len(code.splitlines()), len(validated.splitlines())
+            emit({"type": "step", "index": idx, "mode": single_mode,
+                  "message": f"[{name}] Validation fixed issues ({old_lines}→{new_lines} lines, {time.monotonic()-_t_val:.1f}s)"})
             code = validated
             store.write(f"{prefix}/scene.py", code.encode())
+            emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "code", "content": code})
+        else:
+            emit({"type": "step", "index": idx, "mode": single_mode,
+                  "message": f"[{name}] Validation: no issues found ({time.monotonic()-_t_val:.1f}s)"})
+        _stage("validate", "done")
     except Exception as exc:
-        emit({"type": "warning", "message": f"[{name}] Validation skipped: {exc}"})
+        _stage("validate", "error", detail=_short_error(str(exc)))
+        emit({"type": "warning", "index": idx, "mode": single_mode, "message": f"[{name}] Validation skipped: {exc}"})
 
     # ── Render ───────────────────────────────────────────────────────────────
     video_url: str | None = None
@@ -328,9 +423,11 @@ def _process_concept(
     seen_hashes: set[str] = {_code_hash(current_code)}
     for attempt in range(1, max_retries + 1):
         try:
+            _stage("render", "running", attempt=attempt, max_attempts=max_retries)
             label = f"[{name}] Rendering…" if attempt == 1 \
                 else f"[{name}] Rendering (attempt {attempt}/{max_retries})…"
-            emit({"type": "step", "index": idx, "message": label})
+            emit({"type": "step", "index": idx, "mode": single_mode, "message": label})
+            _t_render = time.monotonic()
             video_path = renderer.render(current_code, store.path(f"{prefix}/render"))
 
             attempt_key = f"{prefix}/history/render_{attempt}.mp4"
@@ -345,13 +442,26 @@ def _process_concept(
                 "trigger": _short_error(last_error) if last_error else None,
             })
             last_error = None
-            emit({"type": "step", "index": idx, "message": f"[{name}] Render complete"})
+            _stage("render", "done", attempt=attempt, max_attempts=max_retries)
+            emit({"type": "step", "index": idx, "mode": single_mode,
+                  "message": f"[{name}] Render complete ({time.monotonic()-_t_render:.1f}s)"})
             break
         except Exception as exc:
             last_error = str(exc)
+            short = _short_error(last_error)
+            _stage("render", "error", detail=short, attempt=attempt, max_attempts=max_retries)
+            emit({"type": "step", "index": idx, "mode": single_mode,
+                  "message": f"[{name}] Render error (attempt {attempt}): {short}"})
+            # Emit full traceback into the per-mode log for debugging
+            full_err = _actionable_error(last_error)
+            if full_err != short:
+                emit({"type": "step", "index": idx, "mode": single_mode,
+                      "message": f"[{name}] Error detail:\n{full_err}"})
             if attempt < max_retries:
                 try:
-                    actionable = _actionable_error(last_error)
+                    actionable = full_err
+                    emit({"type": "step", "index": idx, "mode": single_mode,
+                          "message": f"[{name}] Asking LLM to fix error…"})
                     fixed_code = codegen.fix_code(current_code, actionable)
                     new_hash = _code_hash(fixed_code)
                     if new_hash in seen_hashes:
@@ -360,11 +470,11 @@ def _process_concept(
                         break
                     seen_hashes.add(new_hash)
                     current_code = fixed_code
-                    emit({"type": "llm_output", "index": idx, "stage": "code", "content": fixed_code})
+                    emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "code", "content": fixed_code})
                 except Exception:
                     break
             else:
-                emit({"type": "warning",
+                emit({"type": "warning", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Render failed after {max_retries} attempts: {exc}"})
 
     _check(job_id)
@@ -381,14 +491,14 @@ def _process_concept(
                 frame = cached_frame
                 if not frame:
                     break
-                emit({"type": "step", "index": idx,
+                emit({"type": "step", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Visual diff pass {vd}…"})
                 refined, report = codegen.fix_code_from_visual_diff(
                     current_code, name, source_fig.image_bytes, frame
                 )
                 store.write(f"{prefix}/visual_diff_{vd}.json", report.encode())
                 if refined == current_code:
-                    emit({"type": "step", "index": idx,
+                    emit({"type": "step", "index": idx, "mode": single_mode,
                           "message": f"[{name}] Visual diff pass {vd}: no changes"})
                     break
                 new_vid = renderer.render(refined, store.path(f"{prefix}/render_vd{vd}"))
@@ -405,10 +515,10 @@ def _process_concept(
                     "video_url": store.url(vd_key),
                     "trigger": _diff_trigger(report),
                 })
-                emit({"type": "step", "index": idx,
+                emit({"type": "step", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Visual diff pass {vd}: re-rendered"})
             except Exception as exc:
-                emit({"type": "warning",
+                emit({"type": "warning", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Visual diff pass {vd} failed: {exc}"})
                 break
 
@@ -424,7 +534,8 @@ def _process_concept(
         for crit_iter in range(1, MAX_CRITIC_ITERS + 1):
             _check(job_id)
             try:
-                emit({"type": "step", "index": idx,
+                _stage("critic", "running", attempt=crit_iter, max_attempts=MAX_CRITIC_ITERS)
+                emit({"type": "step", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Critic pass {crit_iter}/{MAX_CRITIC_ITERS}…"})
                 result = critic.critique(
                     video_path=store.path(video_key),
@@ -435,7 +546,7 @@ def _process_concept(
 
                 # Regression guard: if fix made things worse, revert to best and stop
                 if prev_score is not None and result.score < prev_score:
-                    emit({"type": "warning",
+                    emit({"type": "warning", "index": idx, "mode": single_mode,
                           "message": f"[{name}] Critic fix regressed {prev_score}→{result.score}/10, reverting"})
                     if best_video_bytes is not None:
                         store.write(video_key, best_video_bytes)
@@ -460,8 +571,9 @@ def _process_concept(
                     lines += ["## Fix", "", result.fix_instruction, ""]
                 critique_md = "\n".join(lines)
                 store.write(f"{prefix}/critique.md", critique_md.encode())
-                emit({"type": "llm_output", "index": idx, "stage": "critique", "content": critique_md})
-                emit({"type": "step", "index": idx,
+                emit({"type": "llm_output", "index": idx, "mode": single_mode, "stage": "critique", "content": critique_md})
+                _stage("critic", "done", attempt=crit_iter, max_attempts=MAX_CRITIC_ITERS, score=result.score)
+                emit({"type": "step", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Critic pass {crit_iter}: {result.score}/10 {status}"})
 
                 # Annotate the video this critic just scored
@@ -473,16 +585,16 @@ def _process_concept(
 
                 # Apply fix and re-render
                 _check(job_id)
-                emit({"type": "step", "index": idx,
+                emit({"type": "step", "index": idx, "mode": single_mode,
                       "message": f"[{name}] Applying critic fix {crit_iter}…"})
                 try:
                     fixed_code = codegen.apply_instruction(current_code, result.fix_instruction)
                 except Exception as exc:
-                    emit({"type": "warning", "message": f"[{name}] Fix generation failed: {exc}"})
+                    emit({"type": "warning", "index": idx, "mode": single_mode, "message": f"[{name}] Fix generation failed: {exc}"})
                     break
 
                 try:
-                    emit({"type": "step", "index": idx,
+                    emit({"type": "step", "index": idx, "mode": single_mode,
                           "message": f"[{name}] Re-rendering (critic fix {crit_iter})…"})
                     new_vid = renderer.render(fixed_code, store.path(f"{prefix}/render_critic{crit_iter}"))
                     critic_vid_key = f"{prefix}/history/critic_{crit_iter}.mp4"
@@ -502,18 +614,21 @@ def _process_concept(
                         "critic_score": None,  # filled in next iteration
                     })
                 except Exception as exc:
-                    emit({"type": "warning",
+                    _stage("critic", "error", detail=_short_error(str(exc)), attempt=crit_iter, max_attempts=MAX_CRITIC_ITERS)
+                    emit({"type": "warning", "index": idx, "mode": single_mode,
                           "message": f"[{name}] Critic re-render failed: {exc}"})
                     break
             except Exception as exc:
-                emit({"type": "warning", "message": f"[{name}] Critic failed: {exc}"})
+                _stage("critic", "error", detail=_short_error(str(exc)), attempt=crit_iter, max_attempts=MAX_CRITIC_ITERS)
+                emit({"type": "warning", "index": idx, "mode": single_mode, "message": f"[{name}] Critic failed: {exc}"})
                 break
 
     # ── Narration ─────────────────────────────────────────────────────────────
     subtitle_url: str | None = None
     if video_url and video_path and os.environ.get("OPENAI_API_KEY") and options.get("voice", True):
         try:
-            emit({"type": "step", "index": idx,
+            _stage("narration", "running")
+            emit({"type": "step", "index": idx, "mode": single_mode,
                   "message": f"[{name}] Generating narration…"})
             duration = narrator.get_video_duration(video_path)
             script = narrator.generate_script(
@@ -537,14 +652,17 @@ def _process_concept(
                 if hist_path.exists():
                     try:
                         narrator.merge_audio_video(hist_path, audio_bytes, hist_path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Failed to add audio to history entry %s: %s", hist_key, e)
 
-            emit({"type": "step", "index": idx,
+            _stage("narration", "done")
+            emit({"type": "step", "index": idx, "mode": single_mode,
                   "message": f"[{name}] Narration added"})
         except Exception as exc:
-            emit({"type": "warning", "message": f"[{name}] Narration skipped: {exc}"})
+            _stage("narration", "error", detail=_short_error(str(exc)))
+            emit({"type": "warning", "index": idx, "mode": single_mode, "message": f"[{name}] Narration skipped: {exc}"})
 
+    _stage("done", "done")
     duration_ms = int((time.monotonic() - _t0) * 1000)
     _save_concept(job_id, idx, name, concept.visual_type,
                   fig_idx=fig_idx, storyboard=storyboard, video_url=video_url,
@@ -593,8 +711,6 @@ _NOVELTY_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "novelt
 
 def _detect_novelty(paper_text: str, provider: str, model: str) -> tuple[str, dict]:
     """Run novelty detection. Returns (context_block, parsed_data)."""
-    import json as _json
-    import re as _re
     from src.llm_utils import call_llm
 
     try:
@@ -602,17 +718,17 @@ def _detect_novelty(paper_text: str, provider: str, model: str) -> tuple[str, di
         prompt = template.replace("{{PAPER_TEXT}}", paper_text[:6000])
         raw = call_llm(provider, model, prompt, max_tokens=512)
 
-        m = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, _re.DOTALL)
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         if m:
             json_str = m.group(1)
         else:
-            fb = _re.search(r"\{.*\}", raw, _re.DOTALL)
+            fb = re.search(r"\{.*\}", raw, re.DOTALL)
             json_str = fb.group(0) if fb else None
 
         if not json_str:
             return "", {}
 
-        data = _json.loads(json_str)
+        data = json.loads(json_str)
         contribution = data.get("contribution", "")
         mechanism = data.get("key_mechanism", "")
         limitation = data.get("prior_limitation", "")
@@ -666,8 +782,6 @@ def _generate_concept_graph(
     renderer: "ManimRenderer",
 ) -> None:
     """Generate a concept map animation after all concepts are done."""
-    import json as _json
-    import re as _re
     from src.llm_utils import call_llm
     from src.animation.graph_scene import generate_graph_scene
 
@@ -682,17 +796,17 @@ def _generate_concept_graph(
         {"index": i, "name": c.name, "description": c.description, "visual_type": c.visual_type}
         for i, c in enumerate(concepts)
     ]
-    prompt = prompt_template.replace("{{CONCEPTS_JSON}}", _json.dumps(concept_list, indent=2))
+    prompt = prompt_template.replace("{{CONCEPTS_JSON}}", json.dumps(concept_list, indent=2))
 
     try:
         raw = call_llm(provider, model, prompt, max_tokens=1024)
-        m = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, _re.DOTALL)
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         if m:
             json_str = m.group(1)
         else:
-            fallback = _re.search(r"\{.*\}", raw, _re.DOTALL)
+            fallback = re.search(r"\{.*\}", raw, re.DOTALL)
             json_str = fallback.group(0) if fallback else None
-        edges = _json.loads(json_str).get("edges", []) if json_str else []
+        edges = json.loads(json_str).get("edges", []) if json_str else []
         runner.update_job(job_id, concept_edges=edges)
     except Exception as exc:
         emit({"type": "warning", "message": f"Concept graph edge detection failed: {exc}"})
@@ -757,8 +871,8 @@ def _generate_concept_graph(
                 )
                 audio_bytes = narrator.generate_tts(script)
                 narrator.merge_audio_video(video_path, audio_bytes, store.path(graph_key))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Graph narration failed: %s", e)
 
         emit({"type": "stage", "message": "Concept map complete"})
     except Exception as exc:

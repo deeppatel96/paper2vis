@@ -136,6 +136,17 @@ class ManimNarrator:
                 raise RuntimeError(
                     f"ffmpeg merge failed: {r.stderr.decode(errors='replace')[:600]}"
                 )
+            # Guard: only replace if the merged file is at least as large as the original.
+            # A 0-length or truncated output means -shortest killed the video (empty/bad audio).
+            orig_size = video_path.stat().st_size if video_path.exists() else 0
+            merged_size = out_tmp_path.stat().st_size
+            if merged_size < max(orig_size // 2, 1024):
+                out_tmp_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"ffmpeg merge produced a suspiciously small file "
+                    f"({merged_size} bytes vs original {orig_size} bytes) — "
+                    "audio was likely empty or malformed. Keeping original video."
+                )
             out_tmp_path.replace(output_path)
         finally:
             audio_tmp.unlink(missing_ok=True)

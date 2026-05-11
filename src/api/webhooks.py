@@ -45,15 +45,28 @@ async def handle_clerk_webhook(
 
     sb = _supabase()
 
-    if event_type == "user.created":
+    if event_type in ("user.created", "user.updated"):
         clerk_id = data.get("id", "")
         emails = data.get("email_addresses") or []
-        email = emails[0].get("email_address", "") if emails else ""
-        sb.table("users").upsert({
-            "clerk_id": clerk_id,
-            "email": email,
-            "tier": "mini",
-        }).execute()
+        primary_id = data.get("primary_email_address_id")
+        # Prefer primary email address; fall back to first in list
+        email = ""
+        for e in emails:
+            if e.get("id") == primary_id:
+                email = e.get("email_address", "")
+                break
+        if not email and emails:
+            email = emails[0].get("email_address", "")
+        if event_type == "user.created":
+            sb.table("users").upsert({
+                "clerk_id": clerk_id,
+                "email": email,
+                "tier": "mini",
+            }).execute()
+        else:
+            # user.updated: only update email if we now have one
+            if email:
+                sb.table("users").update({"email": email}).eq("clerk_id", clerk_id).execute()
 
     elif event_type == "user.deleted":
         clerk_id = data.get("id", "")

@@ -187,10 +187,12 @@ def get_job(job_id: str) -> JobState | None:
 
 
 def list_jobs(clerk_id: str | None = None) -> list[JobState]:
+    # "dev" is the local no-auth sentinel — show all jobs regardless of clerk_id
+    effective_clerk_id = None if clerk_id == "dev" else clerk_id
     with _lock:
         memory_data = {
             jid: d for jid, d in _jobs.items()
-            if clerk_id is None or d.get("_clerk_id") == clerk_id
+            if effective_clerk_id is None or d.get("_clerk_id") == effective_clerk_id
         }
     result: dict[str, JobState] = {}
     for jid, d in memory_data.items():

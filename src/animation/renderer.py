@@ -184,6 +184,51 @@ def _static_fix(code: str) -> str:
     Apply deterministic fixes before LLM validation or rendering.
     No LLM call — pure text transforms.
     """
+    # 0. Strip decorative Unicode symbols that Python's tokenizer rejects as invalid code tokens.
+    #    LLMs insert these (✓ ✗ ★ etc.) in comments or accidentally in code context.
+    #    Math symbols used in MathTex (→ ≤ etc.) are intentionally left untouched.
+    code = re.sub(r"[✓✗✔✘★◆■●○◇□△▲▼▽☑☐☒✦✧]", "", code)
+
+    # 0b. Auto-convert Text("x_i") → MathTex(r"x_i") for strings containing math notation
+    #     (subscripts _, superscripts ^, or LaTeX backslash commands).
+    #     Only applies to plain string literals — f-strings are left alone.
+    #     Replaces just the Text("content" prefix; remaining kwargs and closing ) are intact.
+    _MATH_IN_TEXT = re.compile(r'[_^]|\\[a-zA-Z]')
+    # Long non-LaTeX word (5+ letters not preceded by \) = prose, not math
+    _PROSE_WORD = re.compile(r'(?<!\\)\b[a-zA-Z]{5,}\b')
+
+    def _maybe_to_mathtex(m: re.Match) -> str:
+        prefix = m.group(1) or ""
+        content = m.group(2)
+        if "f" in prefix:
+            return m.group(0)
+        if not _MATH_IN_TEXT.search(content):
+            return m.group(0)
+        # Don't convert prose sentences: if any non-LaTeX word is ≥5 letters,
+        # the string is a label/title and should stay as Text for legible rendering.
+        if _PROSE_WORD.search(content):
+            return m.group(0)
+        return f'MathTex(r"{content}"'
+
+    # Double-quoted Text
+    code = re.sub(r'\bText\(\s*(r?)"((?:[^"\\]|\\.)*)"', _maybe_to_mathtex, code)
+    # Single-quoted Text (rewritten as double-quoted MathTex)
+    code = re.sub(r"\bText\(\s*(r?)'((?:[^'\\]|\\.)*)'", _maybe_to_mathtex, code)
+
+    # 0c. Add font_size=24 to bare Text("string") calls with no arguments at all.
+    #     Text() defaults to 48pt which is huge; 24 is a sensible body-text default.
+    #     Only matches the zero-extra-args form: Text("...") or Text('...')
+    code = re.sub(
+        r'\bText\((r?"(?:[^"\\]|\\.)*")\)',
+        r'Text(\1, font_size=24)',
+        code,
+    )
+    code = re.sub(
+        r"\bText\((r?'(?:[^'\\]|\\.)*')\)",
+        r'Text(\1, font_size=24)',
+        code,
+    )
+
     # 1. Strip helper function redefinitions (LLM occasionally writes them despite the prompt).
     #    Removes every `def <helper_name>(...)` block at any indentation level.
     lines = code.splitlines()

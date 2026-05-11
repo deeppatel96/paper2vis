@@ -65,17 +65,26 @@ const TIER_LIMITS = {
 };
 
 const EXTRACTION_MODELS = [
-  { value: "gpt-4o-mini",             provider: "openai",     label: "GPT-4o mini",    description: "Fast and cheap — good for most papers.",                          proOnly: false },
-  { value: "gpt-4o",                  provider: "openai",     label: "GPT-4o",         description: "Stronger extraction, better at complex or dense papers.",          proOnly: true  },
-  { value: "claude-haiku-4-5-20251001", provider: "anthropic", label: "Claude Haiku",  description: "Fast Anthropic model, comparable cost to GPT-4o mini.",            proOnly: false },
-  { value: "claude-sonnet-4-6",       provider: "anthropic",  label: "Claude Sonnet",  description: "High-quality Anthropic extraction for nuanced papers.",            proOnly: true  },
+  { value: "gpt-4o-mini-2024-07-18",    provider: "openai",     label: "GPT-4o mini",       description: "Fast and cheap — good for most papers.",                         proOnly: false },
+  { value: "gpt-4o-2024-11-20",         provider: "openai",     label: "GPT-4o",            description: "Stronger extraction, better at complex or dense papers.",         proOnly: true  },
+  { value: "claude-haiku-4-5-20251001", provider: "anthropic",  label: "Claude Haiku 4.5",  description: "Fast Anthropic model, comparable cost to GPT-4o mini.",           proOnly: false },
+  { value: "claude-sonnet-4-5-20250929",provider: "anthropic",  label: "Claude Sonnet 4.5", description: "Previous-gen Sonnet — fast and capable.",                         proOnly: true  },
+  { value: "claude-sonnet-4-6",         provider: "anthropic",  label: "Claude Sonnet 4.6", description: "Latest Sonnet — high-quality extraction for nuanced papers.",     proOnly: true  },
 ];
 
 const CODEGEN_MODELS = [
-  { value: "gpt-4o",            provider: "openai",     label: "GPT-4o",       description: "Solid animation quality, good balance of speed and creativity.",  proOnly: false },
-  { value: "gpt-4.1",           provider: "openai",     label: "GPT-4.1",      description: "Best OpenAI model for code — most reliable complex animations.",  proOnly: true  },
-  { value: "claude-sonnet-4-6", provider: "anthropic",  label: "Claude Sonnet", description: "Strong Anthropic codegen, excellent at structured output.",      proOnly: false },
-  { value: "claude-opus-4-6",   provider: "anthropic",  label: "Claude Opus",  description: "Most capable Anthropic model — highest quality animations.",      proOnly: true  },
+  { value: "gpt-4o-2024-11-20",  provider: "openai",     label: "GPT-4o",            description: "Solid animation quality, good balance of speed and creativity.", proOnly: false },
+  { value: "gpt-4.1-2025-04-14", provider: "openai",     label: "GPT-4.1",           description: "Best OpenAI model for code — most reliable complex animations.", proOnly: true  },
+  { value: "claude-sonnet-4-5-20250929", provider: "anthropic", label: "Claude Sonnet 4.5", description: "Previous-gen Sonnet — fast with strong structured output.",   proOnly: false },
+  { value: "claude-sonnet-4-6",  provider: "anthropic",  label: "Claude Sonnet 4.6", description: "Latest Sonnet — excellent at structured codegen.",                proOnly: false },
+];
+
+// Only vision-capable models can be used as critic (needs to analyze video keyframes)
+const CRITIC_MODELS = [
+  { value: "gpt-4o-2024-11-20",  provider: "openai",     label: "GPT-4o",            description: "Reliable vision critic — good balance of speed and accuracy.",  proOnly: false },
+  { value: "gpt-4.1-2025-04-14", provider: "openai",     label: "GPT-4.1",           description: "Best OpenAI vision model — most thorough critique.",            proOnly: true  },
+  { value: "claude-sonnet-4-5-20250929", provider: "anthropic", label: "Claude Sonnet 4.5", description: "Anthropic vision critic — strong at structured feedback.", proOnly: false },
+  { value: "claude-sonnet-4-6",  provider: "anthropic",  label: "Claude Sonnet 4.6", description: "Latest Sonnet vision critic.",                                   proOnly: false },
 ];
 
 export default function UploadPage() {
@@ -88,13 +97,14 @@ export default function UploadPage() {
   const [parallelConcepts, setParallelConcepts] = useState(1);
   const [maxRetries, setMaxRetries] = useState(5);
   const [voice, setVoice] = useState(true);
-  const [generationMode, setGenerationMode] = useState("two_pass");
+  const [generationModes, setGenerationModes] = useState<string[]>(["two_pass"]);
   const [conceptSelection, setConceptSelection] = useState(false);
   const [useRag, setUseRag] = useState(false);
   const [noveltyFocus, setNoveltyFocus] = useState(false);
   const [userHint, setUserHint] = useState("");
-  const [llmModel, setLlmModel] = useState(EXTRACTION_MODELS[0].value);
-  const [codegenModel, setCodegenModel] = useState(CODEGEN_MODELS[0].value);
+  const [llmModel, setLlmModel] = useState("claude-sonnet-4-6");  // latest Sonnet
+  const [codegenModel, setCodegenModel] = useState("gpt-4o-2024-11-20");
+  const [criticModel, setCriticModel] = useState("gpt-4o-2024-11-20");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
@@ -111,7 +121,6 @@ export default function UploadPage() {
         setQuality("high_quality");
         setParallelConcepts(3);
         setMaxRetries(limits.maxRetries);
-        setUseRag(true);
         setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
         setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
       } else {
@@ -127,14 +136,13 @@ export default function UploadPage() {
       setQuality("high_quality");
       setParallelConcepts(3);
       setMaxRetries(TIER_LIMITS.pro.maxRetries);
-      setUseRag(true);
       setLlmModel(EXTRACTION_MODELS.filter(o => o.proOnly).at(-1)?.value ?? EXTRACTION_MODELS[0].value);
       setCodegenModel(CODEGEN_MODELS.filter(o => o.proOnly).at(-1)?.value ?? CODEGEN_MODELS[0].value);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const effectiveTier = usage?.tier ?? "pro";
+  const effectiveTier = usage?.tier ?? "mini";
   const tierLimits = TIER_LIMITS[effectiveTier] ?? TIER_LIMITS.mini;
   const atLimit = usage ? usage.jobs_used >= usage.jobs_limit : false;
 
@@ -145,7 +153,11 @@ export default function UploadPage() {
     setError(null);
     try {
       const token = await getToken();
-      const job = await submitJob(file, { maxConcepts, quality, figureContext, parallelConcepts, maxRetries, voice, generationMode, conceptSelection, useRag, noveltyFocus, userHint, llmModel, codegenModel }, token);
+      const job = await submitJob(file, { maxConcepts, quality, figureContext,
+        parallelConcepts: noveltyFocus ? 1 : parallelConcepts,
+        maxRetries, voice, generationModes,
+        conceptSelection: noveltyFocus ? false : conceptSelection,
+        useRag, noveltyFocus, userHint, llmModel, codegenModel, criticModel }, token);
       router.push(`/jobs/${job.job_id}`);
     } catch (err) {
       setError(String(err));
@@ -247,6 +259,20 @@ export default function UploadPage() {
               />
             </div>
 
+            <div className="flex items-center gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0">Critic model</label>
+              <OptionPicker
+                value={criticModel}
+                onChange={setCriticModel}
+                options={CRITIC_MODELS.map(m => ({
+                  value: m.value,
+                  label: m.label,
+                  description: m.description,
+                  disabled: m.proOnly && effectiveTier !== "pro",
+                }))}
+              />
+            </div>
+
             <div className={`flex items-center gap-4 ${noveltyFocus ? "opacity-40 pointer-events-none" : ""}`}>
               <label className="text-sm text-gray-300 w-36 shrink-0">
                 Parallel concepts {noveltyFocus && <span className="text-[10px] text-blue-400 font-mono ml-1">auto</span>}
@@ -265,18 +291,51 @@ export default function UploadPage() {
               <span className="text-sm text-white w-4 text-right">{maxRetries}</span>
             </div>
 
-            <div className="flex items-center gap-4">
-              <label className="text-sm text-gray-300 w-36 shrink-0">Generation mode</label>
-              <OptionPicker
-                value={generationMode}
-                onChange={setGenerationMode}
-                options={[
-                  { value: "two_pass", label: "Two-pass",    description: "Plans a visual storyboard first, then writes animation code from it. Best quality — recommended for most papers." },
-                  { value: "dsl",      label: "Typed DSL",   description: "Generates a structured spec that's validated before rendering. Fewer crashes, more predictable output." },
-                  { value: "direct",   label: "Direct",      description: "Writes animation code in a single pass with no planning step. Fastest but most variable quality." },
-                  { value: "all",      label: "Compare all", description: "Runs all three modes in parallel and keeps the best result. Slowest but highest chance of a great animation." },
-                ]}
-              />
+            <div className="flex items-start gap-4">
+              <label className="text-sm text-gray-300 w-36 shrink-0 pt-0.5">Generation mode</label>
+              <div className="flex flex-col gap-2 flex-1">
+                {[
+                  { value: "two_pass", label: "Two-pass",       description: "Plans a visual storyboard first, then writes animation code from it. Best quality." },
+                  { value: "dsl",      label: "Typed DSL",      description: "Generates a validated JSON spec compiled to Manim. Fewer crashes, more predictable." },
+                  { value: "direct",   label: "Direct",         description: "Writes animation code in a single pass. Fastest but most variable quality." },
+                  { value: "lean",     label: "Lean / Mathlib", description: "Experimental: matches concepts to Mathlib type structures for semantically precise animations." },
+                ].map(({ value, label, description }) => {
+                  const checked = generationModes.includes(value);
+                  return (
+                    <label key={value} className="flex items-start gap-3 cursor-pointer group">
+                      <div className="relative mt-0.5 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setGenerationModes(prev => [...prev, value]);
+                            } else {
+                              setGenerationModes(prev => {
+                                const next = prev.filter(m => m !== value);
+                                return next.length === 0 ? prev : next; // prevent empty
+                              });
+                            }
+                          }}
+                          className="sr-only"
+                        />
+                        <div className={`w-4 h-4 rounded border transition-colors ${checked ? "bg-blue-600 border-blue-600" : "border-gray-600 bg-gray-800 group-hover:border-gray-500"}`}>
+                          {checked && <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <span className={`text-sm font-medium ${checked ? "text-white" : "text-gray-400"}`}>{label}</span>
+                        <p className="text-xs text-gray-600 leading-snug mt-0.5">{description}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+                {generationModes.length > 1 && (
+                  <p className="text-xs text-blue-400/80 mt-1">
+                    {generationModes.length} modes selected — animations will be shown side-by-side for comparison.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-4">

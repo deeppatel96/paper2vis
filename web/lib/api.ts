@@ -1,4 +1,7 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
+// SSE streams must bypass the Next.js proxy (which buffers responses).
+// In local dev this goes directly to :8000; in production NEXT_PUBLIC_API_URL is set.
+const STREAM_API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function authHeader(token?: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -41,6 +44,8 @@ export interface VideoHistoryEntry {
   video_url: string;
   trigger: string | null;
   critic_score: number | null;
+  mode?: string; // present when entry is a multi-mode comparison result
+  failed?: boolean; // mode failed to render
 }
 
 export interface ConceptResult {
@@ -95,11 +100,19 @@ export interface ProgressEvent {
   stage?: string;
   content?: string;
   novelty?: { contribution: string; key_mechanism: string; prior_limitation: string; focus_keywords: string[] };
+  // concept_stage fields
+  status?: "running" | "done" | "error";
+  detail?: string;
+  attempt?: number;
+  max_attempts?: number;
+  score?: number;
+  // mode key for per-mode event routing ("two_pass", "direct", "lean", etc.)
+  mode?: string;
 }
 
 export async function submitJob(
   file: File,
-  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationMode: string; conceptSelection: boolean; useRag: boolean; noveltyFocus: boolean; userHint: string; llmModel: string; codegenModel: string },
+  opts: { maxConcepts: number; quality: string; figureContext: boolean; parallelConcepts: number; maxRetries: number; voice: boolean; generationModes: string[]; conceptSelection: boolean; useRag: boolean; noveltyFocus: boolean; userHint: string; llmModel: string; codegenModel: string; criticModel: string },
   token?: string | null,
 ): Promise<JobState> {
   const form = new FormData();
@@ -110,13 +123,14 @@ export async function submitJob(
   form.append("parallel_concepts", String(opts.parallelConcepts));
   form.append("max_retries", String(opts.maxRetries));
   form.append("voice", String(opts.voice));
-  form.append("generation_mode", opts.generationMode);
+  form.append("generation_mode", opts.generationModes.join(","));
   form.append("concept_selection", String(opts.conceptSelection));
   form.append("use_rag", String(opts.useRag));
   form.append("novelty_focus", String(opts.noveltyFocus));
   form.append("user_hint", opts.userHint);
   form.append("llm_model_override", opts.llmModel);
   form.append("codegen_model_override", opts.codegenModel);
+  form.append("critic_model_override", opts.criticModel);
 
   const res = await fetch(`${API}/api/jobs`, { method: "POST", body: form, headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
@@ -138,18 +152,27 @@ export async function getJob(jobId: string, token?: string | null): Promise<JobS
 export function streamJob(
   jobId: string,
   onEvent: (e: ProgressEvent) => void,
-  onDone: () => void
+  onDone: () => void,
+  onError?: (msg: string) => void,
 ): () => void {
-  const es = new EventSource(`${API}/api/jobs/${jobId}/stream`);
+  const es = new EventSource(`${STREAM_API}/api/jobs/${jobId}/stream`);
+  let terminated = false;
   es.onmessage = (ev) => {
     const data: ProgressEvent = JSON.parse(ev.data);
     onEvent(data);
     if (data.type === "done" || data.type === "error" || data.type === "cancelled") {
+      terminated = true;
       es.close();
       onDone();
     }
   };
-  es.onerror = () => { es.close(); onDone(); };
+  es.onerror = () => {
+    es.close();
+    if (!terminated) {
+      onError?.("Lost connection to server — refresh to see latest status.");
+    }
+    if (!terminated) onDone();
+  };
   return () => es.close();
 }
 
@@ -211,6 +234,49 @@ export async function saveAdminConfig(
 export async function cancelJob(jobId: string, token?: string | null): Promise<void> {
   const res = await fetch(`${API}/api/jobs/${jobId}/cancel`, { method: "POST", headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
+}
+
+export interface AdminUser {
+  clerk_id: string;
+  tier: string;
+  created_at: string;
+  job_count: number;
+  email?: string;
+  estimated_cost_usd?: number;
+}
+
+export interface AdminJobSummary {
+  job_id: string;
+  pdf_name: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  options: Record<string, unknown>;
+  concept_count: number;
+}
+
+export async function adminListUsers(secret: string): Promise<AdminUser[]> {
+  const res = await fetch(`/api/admin/users`, { headers: { "x-admin-secret": secret } });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminListAllJobs(secret: string): Promise<AdminJobSummary[]> {
+  const res = await fetch(`/api/admin/jobs`, { headers: { "x-admin-secret": secret } });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listAllJobs(token?: string | null): Promise<AdminJobSummary[]> {
+  const res = await fetch(`${API}/api/admin/jobs`, { headers: authHeader(token) });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function adminListUserJobs(secret: string, clerkId: string): Promise<AdminJobSummary[]> {
+  const res = await fetch(`/api/admin/users/${clerkId}/jobs`, { headers: { "x-admin-secret": secret } });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export function fileUrl(path: string): string {

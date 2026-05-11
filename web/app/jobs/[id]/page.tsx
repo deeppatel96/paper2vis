@@ -1,5 +1,14 @@
 "use client";
 import { use, useEffect, useState, useCallback } from "react";
+
+export interface ConceptStageInfo {
+  stage: string;
+  status: "running" | "done" | "error";
+  detail?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  score?: number;
+}
 import { useAuth } from "@clerk/nextjs";
 import { getJob, streamJob, cancelJob, JobState } from "@/lib/api";
 import ConceptCard, { ConceptSkeleton } from "@/components/ConceptCard";
@@ -7,16 +16,22 @@ import { DashboardStats, PipelineStageTracker, ActivityFeed } from "@/components
 import PaperTab from "@/components/PaperTab";
 import InteractiveConceptMap from "@/components/InteractiveConceptMap";
 import ConceptSelectionPanel from "@/components/ConceptSelectionPanel";
-import LLMPreviewPanel from "@/components/LLMPreviewPanel";
 
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { getToken } = useAuth();
   const [job, setJob] = useState<JobState | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
   const [showPaper, setShowPaper] = useState(false);
   const [streamEpoch, setStreamEpoch] = useState(0);
+  // liveOutputs: "idx:mode:stage" → content
   const [liveOutputs, setLiveOutputs] = useState<Map<string, string>>(new Map());
+  const [conceptStages, setConceptStages] = useState<Map<number, ConceptStageInfo>>(new Map());
+  // conceptLogs: "idx:mode" → string[]
+  const [conceptLogs, setConceptLogs] = useState<Map<string, string[]>>(new Map());
+  // conceptModes: idx → ordered list of mode keys seen
+  const [conceptModes, setConceptModes] = useState<Map<number, string[]>>(new Map());
 
   const refresh = useCallback(async () => {
     try {
@@ -34,19 +49,61 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   useEffect(() => {
     if (!id) return;
+    setStreamError(null);
     const stop = streamJob(
       id,
       (event) => {
         if (event.type === "llm_output" && event.index !== undefined && event.stage && event.content !== undefined) {
+          const mode = event.mode ?? "default";
           setLiveOutputs((prev) => {
             const next = new Map(prev);
-            next.set(`${event.index}:${event.stage}`, event.content!);
+            next.set(`${event.index}:${mode}:${event.stage}`, event.content!);
+            return next;
+          });
+          setConceptModes((prev) => {
+            const existing = prev.get(event.index!) ?? [];
+            if (existing.includes(mode)) return prev;
+            const next = new Map(prev);
+            next.set(event.index!, [...existing, mode]);
+            return next;
+          });
+        }
+        if (event.type === "concept_stage" && event.index !== undefined && event.stage && event.status) {
+          setConceptStages((prev) => {
+            const next = new Map(prev);
+            next.set(event.index!, {
+              stage: event.stage!,
+              status: event.status!,
+              detail: event.detail,
+              attempt: event.attempt,
+              maxAttempts: event.max_attempts,
+              score: event.score,
+            });
+            return next;
+          });
+        }
+        if ((event.type === "step" || event.type === "warning" || event.type === "concept_error") && event.index !== undefined && event.message) {
+          const mode = event.mode ?? "default";
+          const logKey = `${event.index}:${mode}`;
+          setConceptLogs((prev) => {
+            const next = new Map(prev);
+            const existing = next.get(logKey) ?? [];
+            next.set(logKey, [...existing, event.message!]);
+            return next;
+          });
+          // Track mode if not yet seen (for step events that arrive before llm_output)
+          setConceptModes((prev) => {
+            const existing = prev.get(event.index!) ?? [];
+            if (existing.includes(mode)) return prev;
+            const next = new Map(prev);
+            next.set(event.index!, [...existing, mode]);
             return next;
           });
         }
         refresh();
       },
       () => refresh(),
+      (msg) => setStreamError(msg),
     );
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,6 +149,12 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
   return (
     <main className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-5xl mx-auto space-y-5">
+
+        {streamError && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
+            <span>⚠</span> {streamError}
+          </div>
+        )}
 
         {/* ── Header ─────────────────────────────────────────────────── */}
         <div className="flex items-start justify-between gap-4">
@@ -185,9 +248,6 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
               </div>
         )}
 
-        {/* ── LLM live output preview ─────────────────────────────────── */}
-        <LLMPreviewPanel outputs={liveOutputs} stubs={stubs} />
-
         {/* ── Concept cards — appear live as each finishes ────────────── */}
         {stubs.length === 0 && isActive && !job.awaiting_selection && (
           <div className="text-center py-10 text-gray-600 text-sm animate-pulse">
@@ -201,9 +261,20 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <div className="space-y-4">
             {topoSort(stubs, job.concept_edges ?? []).map((stub) => {
               const full = job.concepts.find((c) => c.index === stub.index);
+              const stageInfo = conceptStages.get(stub.index);
+              const activeModes = conceptModes.get(stub.index) ?? [];
+              const modeData: Record<string, { storyboard?: string; code?: string; critique?: string; logs?: string[] }> = {};
+              for (const m of activeModes) {
+                modeData[m] = {
+                  storyboard: liveOutputs.get(`${stub.index}:${m}:storyboard`),
+                  code: liveOutputs.get(`${stub.index}:${m}:code`),
+                  critique: liveOutputs.get(`${stub.index}:${m}:critique`),
+                  logs: conceptLogs.get(`${stub.index}:${m}`) ?? [],
+                };
+              }
               return full
-                ? <ConceptCard key={stub.index} concept={full} />
-                : <ConceptSkeleton key={stub.index} name={stub.name} visual_type={stub.visual_type} hasFigures={!!job.options.figure_context} />;
+                ? <ConceptCard key={stub.index} concept={full} stageInfo={stageInfo} modeData={modeData} activeModes={activeModes} />
+                : <ConceptSkeleton key={stub.index} name={stub.name} visual_type={stub.visual_type} hasFigures={!!job.options.figure_context} stageInfo={stageInfo} />;
             })}
           </div>
         )}
@@ -215,11 +286,52 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           </div>
         )}
 
+        {/* ── PDF viewer ──────────────────────────────────────────────── */}
+        <PdfSection jobId={job.job_id} pdfName={job.pdf_name} />
+
         {/* ── Activity feed ───────────────────────────────────────────── */}
         <ActivityFeed progress={job.progress} error={job.error} />
 
       </div>
     </main>
+  );
+}
+
+function PdfSection({ jobId, pdfName }: { jobId: string; pdfName: string }) {
+  const [open, setOpen] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const url = `/api/files/${jobId}/upload/${encodeURIComponent(pdfName)}`;
+
+  return (
+    <div className="border-t border-gray-800 pt-5">
+      <div className="flex items-center justify-between mb-3">
+        <button
+          onClick={() => !unavailable && setOpen(o => !o)}
+          className="text-sm text-gray-400 hover:text-white transition-colors font-medium disabled:opacity-40"
+          disabled={unavailable}
+        >
+          {unavailable ? "Paper not available" : open ? "▾ Hide Paper" : "▸ View Paper"}
+        </button>
+        {!unavailable && (
+          <a
+            href={url}
+            download={pdfName}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200 transition-colors font-medium"
+          >
+            Download PDF ↓
+          </a>
+        )}
+      </div>
+      {open && (
+        <iframe
+          src={url}
+          className="w-full rounded-lg border border-gray-800 bg-gray-900"
+          style={{ height: "80vh" }}
+          title={pdfName}
+          onError={() => setUnavailable(true)}
+        />
+      )}
+    </div>
   );
 }
 

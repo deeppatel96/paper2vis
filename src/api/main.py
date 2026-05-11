@@ -9,17 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 load_dotenv()
+# Also load web/.env.local so CLERK_SECRET_KEY (and other Next.js-only vars) are available
+_web_env = Path(__file__).parent.parent.parent / "web" / ".env.local"
+if _web_env.exists():
+    load_dotenv(_web_env, override=False)
 
 from src.api import runner
 from src.api.auth import verify_token
@@ -55,8 +62,8 @@ _CONFIG_PATH = DATA_DIR / "tier_config.json"
 
 _TIER_DEFAULTS: dict[str, dict] = {
     "mini": {
-        "llm_provider": "anthropic",
-        "llm_model": "claude-haiku-4-5-20251001",
+        "llm_provider": "openai",
+        "llm_model": "gpt-4o-mini",
         "codegen_provider": "anthropic",
         "codegen_model": "claude-sonnet-4-6",
         "max_concepts_limit": 3,
@@ -64,8 +71,8 @@ _TIER_DEFAULTS: dict[str, dict] = {
         "jobs_per_month": 5,
     },
     "pro": {
-        "llm_provider": "anthropic",
-        "llm_model": "claude-sonnet-4-6",
+        "llm_provider": "openai",
+        "llm_model": "gpt-4o",
         "codegen_provider": "anthropic",
         "codegen_model": "claude-opus-4-6",
         "max_concepts_limit": 16,
@@ -90,16 +97,16 @@ def _load_tier_configs() -> dict[str, dict]:
             saved = json.loads(_CONFIG_PATH.read_text())
             merged = {tier: {**_TIER_DEFAULTS[tier], **saved.get(tier, {})} for tier in _TIER_DEFAULTS}
             return merged
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load tier config, using defaults: %s", e)
     return {tier: dict(cfg) for tier, cfg in _TIER_DEFAULTS.items()}
 
 def _save_tier_configs(configs: dict[str, dict]) -> None:
     try:
         _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CONFIG_PATH.write_text(json.dumps(configs, indent=2))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to save tier config: %s", e)
 
 TIER_CONFIGS: dict[str, dict] = _load_tier_configs()
 
@@ -150,7 +157,8 @@ def _get_monthly_usage(clerk_id: str) -> int:
             .execute()
         )
         return result.count or 0
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to query usage count: %s", e)
         return 0
 
 
@@ -159,8 +167,8 @@ def _record_usage(clerk_id: str, job_id: str) -> None:
         return
     try:
         _supabase().table("usage").insert({"clerk_id": clerk_id, "job_id": job_id}).execute()
-    except Exception:
-        pass  # Non-fatal — job still runs
+    except Exception as e:
+        logger.warning("Failed to record usage for %s/%s: %s", clerk_id, job_id, e)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +192,7 @@ async def create_job(
     user_hint: str = Form(""),
     llm_model_override: str = Form(""),
     codegen_model_override: str = Form(""),
+    critic_model_override: str = Form(""),
     clerk_id: str = Depends(verify_token),
 ):
     tier = _get_user_tier(clerk_id)
@@ -208,10 +217,20 @@ async def create_job(
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     job_id = f"{ts}_{uuid.uuid4().hex[:8]}"
     pdf_key = f"{job_id}/upload/{pdf.filename}"
-    store.write(pdf_key, await pdf.read())
+    pdf_bytes = await pdf.read()
+    store.write(pdf_key, pdf_bytes)
+    # Mirror PDF to Supabase Storage so it's accessible when debugging prod jobs locally
+    if os.environ.get("SUPABASE_URL"):
+        sb = _supabase()
+        try:
+            sb.storage.from_("pdfs").upload(pdf_key, pdf_bytes, {"content-type": "application/pdf", "upsert": "true"})
+        except Exception as e:
+            logger.warning("Failed to mirror PDF to Supabase Storage: %s", e)
 
-    valid_modes = {"two_pass", "dsl", "direct", "all"}
-    gen_mode = generation_mode if generation_mode in valid_modes else "two_pass"
+    valid_modes = {"two_pass", "dsl", "direct", "lean"}
+    requested = [m.strip() for m in generation_mode.split(",") if m.strip()]
+    filtered = [m for m in requested if m in valid_modes]
+    gen_mode = ",".join(filtered) if filtered else "two_pass"
 
     tags: list[str] = [gen_mode, tier, f"v{VERSION}"]
     if figure_context:
@@ -253,6 +272,8 @@ async def create_job(
         "llm_model": llm_model_override or cfg["llm_model"],
         "codegen_provider": _infer_provider(codegen_model_override, cfg["codegen_provider"]),
         "codegen_model": codegen_model_override or cfg["codegen_model"],
+        "critic_provider": _infer_provider(critic_model_override, cfg["codegen_provider"]),
+        "critic_model": critic_model_override or codegen_model_override or cfg["codegen_model"],
     }
     state = runner.create_job(job_id, pdf.filename or "paper.pdf", options, clerk_id=clerk_id)
     _record_usage(clerk_id, job_id)
@@ -286,17 +307,27 @@ async def stream_job(job_id: str):
 
     async def event_generator():
         cursor = 0
+        terminal_sent = False
         while True:
             events = runner.list_events(job_id, after=cursor)
             for event in events:
                 yield f"data: {json.dumps(event)}\n\n"
                 cursor += 1
+                if event.get("type") in ("done", "error", "cancelled"):
+                    terminal_sent = True
 
             job = runner.get_job(job_id)
             if job and job.status in ("done", "failed", "cancelled"):
+                # Drain any remaining events
                 events = runner.list_events(job_id, after=cursor)
                 for event in events:
                     yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") in ("done", "error", "cancelled"):
+                        terminal_sent = True
+                # Ensure client always gets a terminal event to close cleanly
+                if not terminal_sent:
+                    terminal_type = "error" if job.status == "failed" else job.status
+                    yield f"data: {json.dumps({'type': terminal_type})}\n\n"
                 return
 
             await asyncio.sleep(0.5)
@@ -312,6 +343,16 @@ async def stream_job(job_id: str):
 async def serve_file(path: str):
     file_path = store.path(path)
     if not file_path.exists():
+        # Fall back to Supabase Storage for production files not on this machine
+        if os.environ.get("SUPABASE_URL") and path.endswith(".pdf"):
+            sb = _supabase()
+            try:
+                signed = sb.storage.from_("pdfs").create_signed_url(path, 300)
+                signed_url = signed.get("signedURL") or signed.get("signed_url") or (signed.get("data") or {}).get("signedUrl")
+                if signed_url:
+                    return RedirectResponse(signed_url)
+            except Exception:
+                pass
         raise HTTPException(status_code=404, detail="File not found")
 
     suffix = file_path.suffix.lower()
@@ -429,7 +470,6 @@ async def redeem_invite(
         raise HTTPException(status_code=400, detail="Invalid invite code")
     if row.data.get("used_by"):
         raise HTTPException(status_code=400, detail="Invite code already used")
-    from datetime import datetime, timezone
     # Upsert user first — invite_codes.used_by has a FK to users.clerk_id
     sb.table("users").upsert({"clerk_id": clerk_id, "email": "", "tier": "pro"}).execute()
     sb.table("invite_codes").update({
@@ -496,6 +536,238 @@ async def save_config(
         TIER_CONFIGS[tier].update(values)
     _save_tier_configs(TIER_CONFIGS)
     return TIER_CONFIGS
+
+
+def _estimate_cost(options: dict, concept_count: int) -> float:
+    """Rough LLM + TTS cost estimate in USD. Mirrors Dashboard.tsx estConceptCost logic."""
+    PRICING: dict[str, tuple[float, float]] = {  # ($/MTok_in, $/MTok_out)
+        "claude-haiku-4-5": (0.80, 4.0),
+        "claude-haiku-4-5-20251001": (0.80, 4.0),
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-opus-4-6": (15.0, 75.0),
+        "gpt-4o": (2.5, 10.0),
+        "gpt-4o-mini": (0.15, 0.60),
+    }
+
+    def _cost(model: str, in_tok: int, out_tok: int) -> float:
+        p = PRICING.get(model, (3.0, 15.0))
+        return (in_tok * p[0] + out_tok * p[1]) / 1_000_000
+
+    llm = options.get("llm_model_override") or options.get("llm_model") or "gpt-4o"
+    codegen = options.get("codegen_model_override") or options.get("codegen_model") or "claude-sonnet-4-6"
+    n = max(concept_count, 1)
+    gen_mode = options.get("generation_mode", "two_pass")
+    modes = len(gen_mode.split(",")) if gen_mode else 1
+    max_retries = int(options.get("max_retries", 6))
+
+    # Extraction (once per job): validate + concept list
+    total = _cost(llm, 4000, 800)
+    for _ in range(n):
+        # Storyboard + codegen (per mode)
+        total += _cost(codegen, 1000 + 1500, 400 + 750) * modes
+        # Assume half of max_retries used on average for fix_code calls
+        total += _cost(codegen, 2000, 750) * (max_retries // 2)
+        # Critic base + one fix pass
+        total += _cost(codegen, 750 + 2000, 250 + 750)
+        # Narration script + TTS
+        if options.get("voice"):
+            total += _cost(codegen, 2000, 300)
+            total += 500 * 15 / 1_000_000
+    return round(total, 4)
+
+
+def _clerk_emails(clerk_ids: list[str]) -> dict[str, str]:
+    """Fetch emails for a list of Clerk user IDs via the Clerk REST API.
+
+    Returns a dict {clerk_id: email}. Silently returns empty dict if
+    CLERK_SECRET_KEY is not configured or the request fails.
+    """
+    secret = os.environ.get("CLERK_SECRET_KEY", "")
+    if not secret or not clerk_ids:
+        return {}
+    try:
+        import requests as _requests
+        batch_size = 100
+        result: dict[str, str] = {}
+        for i in range(0, len(clerk_ids), batch_size):
+            batch = clerk_ids[i : i + batch_size]
+            params = [("user_id[]", cid) for cid in batch] + [("limit", batch_size)]
+            resp = _requests.get(
+                "https://api.clerk.com/v1/users",
+                params=params,
+                headers={"Authorization": f"Bearer {secret}"},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            for u in resp.json():
+                emails = u.get("email_addresses") or []
+                primary_id = u.get("primary_email_address_id")
+                email = ""
+                for e in emails:
+                    if e.get("id") == primary_id:
+                        email = e.get("email_address", "")
+                        break
+                if not email and emails:
+                    email = emails[0].get("email_address", "")
+                if email:
+                    result[u["id"]] = email
+        return result
+    except Exception as exc:
+        logger.warning("Clerk email fetch failed: %s", exc)
+        return {}
+
+
+@app.get("/api/admin/users")
+async def list_all_users(
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    """List all users with tier and job count."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not os.environ.get("SUPABASE_URL"):
+        # Local dev: derive users from in-memory jobs
+        all_jobs = runner.list_jobs()
+        from collections import Counter
+        counts: Counter = Counter()
+        earliest: dict = {}
+        costs: dict = {}
+        for job in all_jobs:
+            cid = getattr(job, "_clerk_id", "") or "dev"
+            counts[cid] += 1
+            ca = getattr(job, "created_at", None) or ""
+            if cid not in earliest or ca < earliest[cid]:
+                earliest[cid] = ca
+            costs[cid] = costs.get(cid, 0.0) + _estimate_cost(job.options or {}, len(job.concepts))
+        return [
+            {"clerk_id": cid, "tier": os.environ.get("DEV_TIER", "pro"), "created_at": earliest.get(cid, ""), "job_count": cnt, "email": None, "estimated_cost_usd": round(costs.get(cid, 0.0), 4)}
+            for cid, cnt in counts.most_common()
+        ]
+    users = _supabase().table("users").select("*").order("created_at", desc=True).execute()
+    user_rows = users.data or []
+    if user_rows:
+        ids = [u["clerk_id"] for u in user_rows]
+        jobs = _supabase().table("jobs").select("clerk_id, status, state").in_("clerk_id", ids).execute()
+        from collections import Counter
+        counts = Counter(j["clerk_id"] for j in (jobs.data or []))
+        costs_map: dict = {}
+        for j in (jobs.data or []):
+            raw = j.get("state") or {}
+            state = json.loads(raw) if isinstance(raw, str) else raw
+            cid = j["clerk_id"]
+            costs_map[cid] = costs_map.get(cid, 0.0) + _estimate_cost(state.get("options", {}), len(state.get("concepts", [])))
+        # Enrich missing emails from Clerk API (covers Google OAuth + any users
+        # whose webhook fired before the email column existed)
+        missing_email_ids = [u["clerk_id"] for u in user_rows if not u.get("email")]
+        clerk_email_map = _clerk_emails(missing_email_ids)
+        for u in user_rows:
+            u["job_count"] = counts.get(u["clerk_id"], 0)
+            u["estimated_cost_usd"] = round(costs_map.get(u["clerk_id"], 0.0), 4)
+            if not u.get("email") and u["clerk_id"] in clerk_email_map:
+                u["email"] = clerk_email_map[u["clerk_id"]]
+                # Backfill to Supabase so next load is instant
+                try:
+                    _supabase().table("users").update({"email": u["email"]}).eq("clerk_id", u["clerk_id"]).execute()
+                except Exception:
+                    pass
+    return user_rows
+
+
+@app.get("/api/admin/users/{clerk_id}/jobs")
+async def list_user_jobs(
+    clerk_id: str,
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    """List all jobs for a specific user (admin view)."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret or x_admin_secret != admin_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not os.environ.get("SUPABASE_URL"):
+        # Local dev: read from in-memory runner (clerk_id "dev" = all jobs)
+        all_jobs = runner.list_jobs(clerk_id=None if clerk_id == "dev" else clerk_id)
+        return [
+            {
+                "job_id": job.job_id,
+                "pdf_name": job.pdf_name,
+                "status": job.status,
+                "created_at": job.created_at,
+                "completed_at": job.completed_at,
+                "options": job.options,
+                "concept_count": len(job.concepts),
+            }
+            for job in sorted(all_jobs, key=lambda j: j.created_at or "", reverse=True)
+        ]
+    rows = _supabase().table("jobs").select("job_id, pdf_name, status, created_at, completed_at, state").eq("clerk_id", clerk_id).order("created_at", desc=True).execute()
+    results = []
+    for row in (rows.data or []):
+        raw = row.get("state") or {}
+        state = json.loads(raw) if isinstance(raw, str) else raw
+        results.append({
+            "job_id": row["job_id"],
+            "pdf_name": row["pdf_name"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "completed_at": row.get("completed_at"),
+            "options": state.get("options", {}),
+            "concept_count": len(state.get("concepts", [])),
+        })
+    return results
+
+
+@app.get("/api/admin/jobs")
+async def list_all_jobs(
+    request: Request,
+    x_admin_secret: str = Header(default="", alias="x-admin-secret"),
+):
+    """List all jobs across all users (admin or pro-tier JWT)."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    is_admin = bool(admin_secret and x_admin_secret == admin_secret)
+    deny_reason = "no valid auth"
+    if not is_admin:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header:
+            deny_reason = "no Authorization header"
+        else:
+            try:
+                clerk_id = verify_token(authorization=auth_header)
+                tier = _get_user_tier(clerk_id)
+                if tier == "pro":
+                    is_admin = True
+                else:
+                    deny_reason = f"tier is '{tier}', not 'pro'"
+            except Exception as e:
+                deny_reason = f"token error: {e}"
+    if not is_admin:
+        raise HTTPException(status_code=403, detail=f"Forbidden: {deny_reason}")
+    if not os.environ.get("SUPABASE_URL"):
+        all_jobs = runner.list_jobs(clerk_id=None)
+        return [
+            {
+                "job_id": job.job_id,
+                "pdf_name": job.pdf_name,
+                "status": job.status,
+                "created_at": job.created_at,
+                "completed_at": job.completed_at,
+                "options": job.options,
+                "concept_count": len(job.concepts),
+            }
+            for job in sorted(all_jobs, key=lambda j: j.created_at or "", reverse=True)
+        ]
+    rows = _supabase().table("jobs").select("job_id, pdf_name, status, created_at, completed_at, state").order("created_at", desc=True).limit(500).execute()
+    results = []
+    for row in (rows.data or []):
+        raw = row.get("state") or {}
+        state = json.loads(raw) if isinstance(raw, str) else raw
+        results.append({
+            "job_id": row["job_id"],
+            "pdf_name": row["pdf_name"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "completed_at": row.get("completed_at"),
+            "options": state.get("options", {}),
+            "concept_count": len(state.get("concepts", [])),
+        })
+    return results
 
 
 @app.post("/api/admin/users/{clerk_id}/tier")

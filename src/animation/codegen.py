@@ -324,9 +324,12 @@ class ManimCodeGenerator:
             "16. Text() without font_size defaults to 48pt which is HUGE — every Text() call MUST have "
             "font_size explicitly: title=34, body labels=24, small annotations=18, tiny mono=14. "
             "Scan every Text() in the file and add font_size if missing.\n"
-            "17. NEVER put LaTeX/math inside Text() — Text(r'\\frac{1}{2}') shows raw backslashes. "
-            "Use MathTex(r'\\frac{1}{2}') for ALL math expressions. "
-            "Find any Text() containing backslashes or math symbols and convert to MathTex.\n"
+            "17. NEVER put math inside Text() — underscore renders as literal underscore, not subscript. "
+            "Text('d_A') shows 'd_A' literally; MathTex(r'd_A') renders as a proper subscript. "
+            "Convert ALL Text() containing: underscores (_), carets (^), backslashes, Greek letters, "
+            "fractions, or any variable/formula notation → MathTex(r'...'). "
+            "Examples: Text('x_i')→MathTex(r'x_i'), Text('O(n^2)')→MathTex(r'O(n^2)'), "
+            "Text('α')→MathTex(r'\\alpha').\n"
             "18. Static-only animation — if the ENTIRE scene uses only FadeIn/Write/Create with no "
             "Transform/ReplacementTransform/ValueTracker/animate_bars, add at least one dynamic transformation. "
             "Find the most important result being shown and replace its FadeIn with a ReplacementTransform "
@@ -450,8 +453,9 @@ class ManimCodeGenerator:
 
     def _fix_code_issues(self, code: str) -> str:
         """Programmatic fixes that LLM validators miss consistently."""
-        # Cap any font_size above 36 to 34 (title max)
+        # Cap font_size: titles ≤34, body content rarely needs more than 24.
+        # Hard cap at 34 prevents illegibly large text on the 8-unit-wide canvas.
         def _cap_font_size(m: re.Match) -> str:
-            return f"font_size={min(int(m.group(1)), 36)}"
+            return f"font_size={min(int(m.group(1)), 34)}"
         code = re.sub(r"font_size=(\d+)", _cap_font_size, code)
         return code

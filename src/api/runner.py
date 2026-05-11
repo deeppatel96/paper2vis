@@ -67,11 +67,14 @@ def _sync_to_supabase(job_id: str) -> None:
         state = {k: v for k, v in data.items() if not k.startswith("_")}
         completed_at = data.get("completed_at")
     try:
+        raw_status = state.get("status", "queued")
+        # JobStatus is a str enum; str() gives "JobStatus.done" in older Python — use .value
+        status_str = raw_status.value if hasattr(raw_status, "value") else str(raw_status)
         sb.table("jobs").upsert({
             "job_id": job_id,
             "clerk_id": clerk_id,
             "pdf_name": state.get("pdf_name", ""),
-            "status": str(state.get("status", "queued")),
+            "status": status_str,
             "state": json.dumps(state, default=str),
             "created_at": state.get("created_at"),
             "completed_at": completed_at,

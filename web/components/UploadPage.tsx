@@ -92,7 +92,7 @@ export default function UploadPage() {
   const { getToken } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [maxConcepts, setMaxConcepts] = useState(3);
-  const [quality, setQuality] = useState("low_quality");
+  const [quality, setQuality] = useState("medium_quality");
   const [figureContext, setFigureContext] = useState(false);
   const [parallelConcepts, setParallelConcepts] = useState(1);
   const [maxRetries, setMaxRetries] = useState(5);
@@ -102,8 +102,8 @@ export default function UploadPage() {
   const [useRag, setUseRag] = useState(false);
   const [noveltyFocus, setNoveltyFocus] = useState(false);
   const [userHint, setUserHint] = useState("");
-  const [llmModel, setLlmModel] = useState("claude-sonnet-4-6");  // latest Sonnet
-  const [codegenModel, setCodegenModel] = useState("gpt-4o-2024-11-20");
+  const [llmModel, setLlmModel] = useState("gpt-4o-2024-11-20");
+  const [codegenModel, setCodegenModel] = useState("claude-sonnet-4-6");
   const [criticModel, setCriticModel] = useState("gpt-4o-2024-11-20");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

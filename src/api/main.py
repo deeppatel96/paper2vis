@@ -745,15 +745,23 @@ async def list_user_jobs(
             for job in sorted(all_jobs, key=lambda j: j.created_at or "", reverse=True)
         ]
     rows = _supabase().table("jobs").select("job_id, pdf_name, status, created_at, completed_at, state").eq("clerk_id", clerk_id).order("created_at", desc=True).execute()
+    return _rows_to_job_summaries(rows.data or [])
+
+
+def _rows_to_job_summaries(rows: list[dict]) -> list[dict]:
+    """Convert Supabase job rows to summary dicts, normalising the status field."""
     results = []
-    for row in (rows.data or []):
+    for row in rows:
         raw = row.get("state") or {}
         state = json.loads(raw) if isinstance(raw, str) else raw
+        raw_status = row.get("status") or "queued"
+        # Older code stored "JobStatus.done" instead of "done" — normalise on read
+        status = raw_status.split(".")[-1] if "." in raw_status else raw_status
         results.append({
             "job_id": row["job_id"],
-            "pdf_name": row["pdf_name"],
-            "status": row["status"],
-            "created_at": row["created_at"],
+            "pdf_name": row.get("pdf_name", ""),
+            "status": status,
+            "created_at": row.get("created_at"),
             "completed_at": row.get("completed_at"),
             "options": state.get("options", {}),
             "concept_count": len(state.get("concepts", [])),
@@ -801,20 +809,7 @@ async def list_all_jobs(
             for job in sorted(all_jobs, key=lambda j: j.created_at or "", reverse=True)
         ]
     rows = _supabase().table("jobs").select("job_id, pdf_name, status, created_at, completed_at, state").order("created_at", desc=True).limit(500).execute()
-    results = []
-    for row in (rows.data or []):
-        raw = row.get("state") or {}
-        state = json.loads(raw) if isinstance(raw, str) else raw
-        results.append({
-            "job_id": row["job_id"],
-            "pdf_name": row["pdf_name"],
-            "status": row["status"],
-            "created_at": row["created_at"],
-            "completed_at": row.get("completed_at"),
-            "options": state.get("options", {}),
-            "concept_count": len(state.get("concepts", [])),
-        })
-    return results
+    return _rows_to_job_summaries(rows.data or [])
 
 
 @app.post("/api/admin/users/{clerk_id}/tier")
